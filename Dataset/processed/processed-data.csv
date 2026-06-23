@@ -1,0 +1,11 @@
+Impact categories,Units,Virgin PET,Mechanical R PET,Enzymatic R PET,Chemical R PET,Nylon 6,"Nylon 6,6",Hemp,Wool,Spandex,Conventional Cotton,Organic Cotton,Mechanical R Cotton,Chemical R Cotton,Enzymatic R Cotton,Viscose,Recycled Viscose,PLA,Silk
+Climate change,kg CO2 eq,292,107,171,223,710,977,37.4,,447,169,109,19.6,316,,350,,266,
+Climate change incl biogenic carbon,kg CO2 eq,293,107,,227,712,978,,,,-15.5,-74.2,,,,254,,82.7,
+Fossil depletion,kg oil eq,176,14.9,81.4,137,317,391,24.3,,233,34.7,13.4,7.54,104,,138,,93,
+freshwater consumption,m3,1.51,0.322,10.9,27.7,1.52,3.3,27.3,,2.48,141,18.2,0.125,9.27,,2.31,,3.56,
+Human toxicity - noncancer,"kg 1,4 DB eq",27.8,4.74E+00,10.6,26.2,38.9,59.6,4.36,,36.9,586,11.8,0.416,23.2,,7020,,5.12,
+Freshwater ecotoxicity,"kg 1,4 DB eq",0.0792,9.40E-03,0.00359,8.44E-02,0.133,0.185,0.013,,0.13,0.988,0.051,0.00128,*,,3.72E+00,,9.09E-01,
+Freshwater eutrophication,kg P eq,9.48E-04,0.000138,0.000683,1.29E-03,8.52E-04,1.11E-03,8.27E-03,,2.20E-03,0.0693,1.03E-02,2.90E-05,7.90E-04,,2.79E-03,,1.47E-03,
+Human toxicity - Cancer,"kg 1,4 DB eq",3.48,0.113,0.955,2.94,4.89,7.64,0.511,,2.8,0.664,0.433,0.0262,2.14,,0.852,,38.6,
+Acidification,kg SO2 eq,0.272,0.0686,0.153,0.195,0.73,1.14,1.62,,0.391,2.48,0.509,0.0149,0.866,,21.4,,0.561,
+Land Use,Annual crop eq/year,3.88,4.51,5.41,1.96,8.33,7.04,1.76,,14.2,1240,2130,0.412,4.36,,209,,173,
