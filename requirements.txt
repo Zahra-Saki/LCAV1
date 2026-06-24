@@ -4,3 +4,4 @@ shinywidgets
 plotly
 pandas
 ridgeplot
+kaleido==0.2.1
