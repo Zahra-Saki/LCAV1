@@ -1,26 +1,21 @@
-"""LCA fiber comparison dashboard V1 (Shiny + Plotly)."""
+"""LCA fiber comparison dashboard (Shiny + Plotly)."""
 
 from __future__ import annotations
 import io
+import os
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 import numpy as np
-import pandas as pd 
+import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from shiny import App, reactive, render, ui
 from shinywidgets import output_widget, render_plotly
 
-
-
-# APP_DIR = Path(__file__).resolve().parent
-# DATA_FILE = APP_DIR.parent / "Dataset" / "processed" / "processed-data.csv"
-
-DATA_FILE = Path("Dataset/processed/processed-data.csv")
-
+DATA_FILE = Path(os.getcwd()) / "Dataset" / "processed" / "processed-data.csv"
 
 CHARTS_PER_ROW = 2
 PIE_HOLE = 0.4
@@ -37,17 +32,8 @@ SECTION_IMPACT_LOCK_MSG = (
 )
 MISSING_VALUE_LABEL = "N/A"
 MISSING_VALUE_COLOR = "#c0392b"
-MISSING_HEATMAP_FILL = "#1a1a1a"
-HEATMAP_MISSING_Z = -1.0
-HEATMAP_COLORSCALE = [
-    [0.0, MISSING_HEATMAP_FILL],
-    [0.499, MISSING_HEATMAP_FILL],
-    [0.5, "#eff3ff"],
-    [0.625, "#bdd7e7"],
-    [0.75, "#6baed6"],
-    [0.875, "#3182bd"],
-    [1.0, "#08519c"],
-]
+HEATMAP_MISSING_CELL_FILL = "#ffffff"
+HEATMAP_MISSING_LINE_COLOR = "#aaaaaa"
 HEATMAP_DATA_COLORSCALE = [
     [0.0, "#eff3ff"],
     [0.25, "#bdd7e7"],
@@ -72,8 +58,9 @@ NORM_METHOD_CHOICES = {
 }
 
 
-def _norm_method_is_per_impact(method: str) -> bool:
-    return method == NORM_METHOD_ABS_MAX
+def _baseline_ref_panel_inactive(method: str) -> bool:
+    """Grey out reference fiber when the selected norm method does not use it."""
+    return not _norm_method_requires_baseline(method) and method != NORM_METHOD_RAW
 
 
 def _norm_method_requires_baseline(method: str) -> bool:
@@ -99,6 +86,19 @@ def _normalization_supported(
 DISPLAY_DECIMALS = 3
 DISPLAY_NUMBER_FMT = f".{DISPLAY_DECIMALS}f"
 RADAR_RADIAL_TICK_FMT = ".0f"
+RADAR_ABS_MAX_TICKVALS = [-1.0, -0.5, 0.0, 0.5, 1.0]
+RADAR_ABS_MAX_TICKTEXT = ["-1", "-0.5", "0", "0.5", "1"]
+
+
+def _bar_y_tickformat(norm_method: str) -> str:
+    """Bar chart value-axis tick labels (less precision than table display)."""
+    if norm_method == NORM_METHOD_MINMAX:
+        return ".0f"
+    if norm_method == NORM_METHOD_ABS_MAX:
+        return ".1f"
+    if norm_method in (NORM_METHOD_BASELINE, NORM_METHOD_ASINH):
+        return ".2f"
+    return ".4g"
 
 
 def _json_safe_number(value: object) -> float | None:
@@ -233,7 +233,7 @@ class ChartLayout:
         default_factory=lambda: {"l": 20, "r": 20, "t": 28, "b": 28}
     )
     margin_bar_grid: dict = field(
-        default_factory=lambda: {"l": 20, "r": 20, "t": 28, "b": 64}
+        default_factory=lambda: {"l": 56, "r": 20, "t": 28, "b": 64}
     )
 
     def vertical_spacing_for(self, grid_rows: int, *, bar: bool = False) -> float:
@@ -263,26 +263,9 @@ class LcaData:
     mtime: float
 
 
-_CATALOG_ACRONYM_REPLACEMENTS: tuple[tuple[re.Pattern[str], str], ...] = (
-    (re.compile(r"\bRpet\b"), "rPET"),
-    (re.compile(r"\bPet\b"), "PET"),
-    (re.compile(r"\bPla\b"), "PLA"),
-    (re.compile(r"\bPhb\b"), "PHB"),
-    (re.compile(r"\bCo2\b"), "CO2"),
-    (re.compile(r"\bSo2\b"), "SO2"),
-    (re.compile(r"\bDb\b"), "DB"),
-)
-
-
 def _normalize_catalog_label(text: str) -> str:
-    """Title-case fiber/impact labels from CSV while preserving common acronyms."""
-    cleaned = " ".join(str(text).strip().split())
-    if not cleaned:
-        return cleaned
-    titled = cleaned.title()
-    for pattern, replacement in _CATALOG_ACRONYM_REPLACEMENTS:
-        titled = pattern.sub(replacement, titled)
-    return titled
+    """Trim and collapse whitespace; keep CSV spelling as-is."""
+    return " ".join(str(text).strip().split())
 
 
 def _clean_loaded_dataframe(raw: pd.DataFrame) -> pd.DataFrame:
@@ -798,16 +781,90 @@ def _bar_grid_shape(n: int) -> tuple[int, int, int]:
     return 1, n, 0
 
 
+_ABS_MAX_TICK_TOLERANCE = 1e-4
+
+
+def _finite_bar_values(values: list[float | None]) -> list[float]:
+    return [float(v) for v in values if v is not None and np.isfinite(v)]
+
+
+def _bar_has_abs_max_reference(values: list[float | None], target: float) -> bool:
+    return any(
+        np.isclose(v, target, atol=_ABS_MAX_TICK_TOLERANCE, rtol=0)
+        for v in _finite_bar_values(values)
+    )
+
+
+def _linear_axis_tick_candidates(lo: float, hi: float, *, max_ticks: int = 6) -> list[float]:
+    if hi <= lo:
+        return [lo]
+    step = (hi - lo) / max(max_ticks - 1, 1)
+    if step <= 0:
+        return [lo, hi]
+    magnitude = 10 ** np.floor(np.log10(step))
+    nice_step = magnitude * np.ceil(step / magnitude)
+    start = np.floor(lo / nice_step) * nice_step
+    ticks: list[float] = []
+    tick = float(start)
+    while tick <= hi + nice_step * 0.001:
+        if lo - nice_step * 0.001 <= tick <= hi + nice_step * 0.001:
+            ticks.append(tick)
+        tick += float(nice_step)
+    return ticks if ticks else [lo, hi]
+
+
+def _bar_abs_max_axis_tickvals(
+    lo: float,
+    hi: float,
+    values: list[float | None],
+    *,
+    max_ticks: int = 6,
+) -> list[float]:
+    """Per-impact norm: only show ±1 ticks when a bar actually has that value."""
+    finite = _finite_bar_values(values)
+    has_neg_one = _bar_has_abs_max_reference(values, -1.0)
+    has_pos_one = _bar_has_abs_max_reference(values, 1.0)
+    if finite:
+        data_lo, data_hi = min(finite), max(finite)
+        edge_pad = max((data_hi - data_lo) * 0.05, 0.01)
+        tick_lo = data_lo - edge_pad
+        tick_hi = data_hi + edge_pad
+    else:
+        tick_lo, tick_hi = lo, hi
+
+    def _keep_tick(tick: float) -> bool:
+        if np.isclose(tick, -1.0, atol=_ABS_MAX_TICK_TOLERANCE, rtol=0):
+            return has_neg_one
+        if np.isclose(tick, 1.0, atol=_ABS_MAX_TICK_TOLERANCE, rtol=0):
+            return has_pos_one
+        if np.isclose(tick, 0.0, atol=_ABS_MAX_TICK_TOLERANCE, rtol=0):
+            return lo <= 0 <= hi
+        return tick_lo - _ABS_MAX_TICK_TOLERANCE <= tick <= tick_hi + _ABS_MAX_TICK_TOLERANCE
+
+    ticks = [tick for tick in _linear_axis_tick_candidates(lo, hi, max_ticks=max_ticks) if _keep_tick(tick)]
+    if lo <= 0 <= hi and not any(
+        np.isclose(t, 0.0, atol=_ABS_MAX_TICK_TOLERANCE, rtol=0) for t in ticks
+    ):
+        ticks.append(0.0)
+    if has_neg_one and not any(
+        np.isclose(t, -1.0, atol=_ABS_MAX_TICK_TOLERANCE, rtol=0) for t in ticks
+    ):
+        ticks.append(-1.0)
+    if has_pos_one and not any(
+        np.isclose(t, 1.0, atol=_ABS_MAX_TICK_TOLERANCE, rtol=0) for t in ticks
+    ):
+        ticks.append(1.0)
+    ticks.sort()
+    return ticks
+
+
 def _bar_y_axis_range(
     values: list[float | None],
     *,
     norm_method: str = NORM_METHOD_RAW,
 ) -> list[float] | None:
     """Tight y-axis limits so bar heights reflect the actual value spread."""
-    if norm_method == NORM_METHOD_ABS_MAX:
-        return [-1.0, 1.0]
-
-    finite = [float(v) for v in values if v is not None and np.isfinite(v)]
+    finite = _finite_bar_values(values)
     if not finite:
         return None
 
@@ -848,8 +905,9 @@ def _bar_axis_range_with_value_label_pad(
     if span <= 0:
         return axis_range
     pad = span * (value_label_px / plot_px)
-    new_lo = lo - pad if lo < 0 else lo
-    return [new_lo, hi + pad]
+    new_lo = lo - pad
+    new_hi = hi + pad
+    return [new_lo, new_hi]
 
 
 def _apply_bar_y_axis_range(
@@ -862,8 +920,11 @@ def _apply_bar_y_axis_range(
     plot_px: int | None = None,
     value_label_px: int = 0,
 ) -> None:
+    axis_kw: dict = dict(row=row, col=col) if row is not None and col is not None else {}
+    tickformat = _bar_y_tickformat(norm_method)
     axis_range = _bar_y_axis_range(values, norm_method=norm_method)
     if axis_range is None:
+        fig.update_yaxes(tickformat=tickformat, **axis_kw)
         return
     if plot_px and value_label_px:
         axis_range = _bar_axis_range_with_value_label_pad(
@@ -871,8 +932,18 @@ def _apply_bar_y_axis_range(
             plot_px=plot_px,
             value_label_px=value_label_px,
         )
-    axis_kw: dict = dict(row=row, col=col) if row is not None and col is not None else {}
-    fig.update_yaxes(range=axis_range, autorange=False, **axis_kw)
+    axis_update: dict = dict(
+        range=axis_range,
+        autorange=False,
+        tickformat=tickformat,
+        zeroline=axis_range[0] <= 0 <= axis_range[1],
+        **axis_kw,
+    )
+    if norm_method == NORM_METHOD_ABS_MAX:
+        lo, hi = axis_range
+        axis_update["tickmode"] = "array"
+        axis_update["tickvals"] = _bar_abs_max_axis_tickvals(lo, hi, values)
+    fig.update_yaxes(**axis_update)
 
 
 def _plotly_widget(fig: go.Figure) -> go.FigureWidget:
@@ -962,7 +1033,7 @@ def _table_download_buttons(table_output_id: str) -> ui.Tag:
     return ui.div(
         ui.download_button(
             f"{table_output_id}_download_csv",
-            "Download",
+            "CSV",
             class_="btn btn-sm btn-outline-secondary",
         ),
         class_="lca-chart-download-toolbar",
@@ -1206,6 +1277,7 @@ def _bar_grid_layout_dims(
         + (grid_rows - 1) * label_gap_px
         + top_margin
         + x_label_px
+        + 24
     )
 
     spacing = label_gap_px / height
@@ -1319,12 +1391,13 @@ def _apply_bar_chart_theme(
         linewidth=1,
         linecolor="#d0d0d0",
         mirror=False,
+        layer="below traces",
+        ticks="outside",
         showgrid=False,
         zeroline=True,
         zerolinecolor="#888888",
         zerolinewidth=1.5,
         tickfont=dict(size=10, color="#444"),
-        tickformat=DISPLAY_NUMBER_FMT,
         title_font=dict(size=11, color="#333"),
         **axis_kw,
     )
@@ -1717,6 +1790,46 @@ def _heatmap_layout_dims(
     }
 
 
+def _heatmap_missing_cell_shapes(
+    missing_cells: list[tuple[int, int]],
+) -> list[dict]:
+    """White tile with a diagonal line for missing heatmap cells."""
+    shapes: list[dict] = []
+    border = dict(color="#e0e0e0", width=1)
+    slash = dict(color=HEATMAP_MISSING_LINE_COLOR, width=1)
+    for col_idx, row_idx in missing_cells:
+        x0, x1 = col_idx - 0.5, col_idx + 0.5
+        y0, y1 = row_idx - 0.5, row_idx + 0.5
+        shapes.append(
+            dict(
+                type="rect",
+                xref="x",
+                yref="y",
+                x0=x0,
+                x1=x1,
+                y0=y0,
+                y1=y1,
+                fillcolor=HEATMAP_MISSING_CELL_FILL,
+                line=border,
+                layer="above",
+            )
+        )
+        shapes.append(
+            dict(
+                type="line",
+                xref="x",
+                yref="y",
+                x0=x0,
+                y0=y1,
+                x1=x1,
+                y1=y0,
+                line=slash,
+                layer="above",
+            )
+        )
+    return shapes
+
+
 def _heatmap_colorbar(*, len_px: int) -> dict:
     """Vertical scale beside the heatmap grid."""
     return dict(
@@ -1768,19 +1881,26 @@ def build_heatmap_figure(
 
     z: list[list[float | None]] = []
     hover_data: list[list[list[str]]] = []
+    missing_cells: list[tuple[int, int]] = []
     for i, impact in enumerate(available_impacts):
         z_row: list[float | None] = []
         hover_row: list[list[str]] = []
         impact_full = y_full[i]
-        for fiber in present_fibers:
+        for j, fiber in enumerate(present_fibers):
             display_val = _json_safe_number(value_matrix.at[impact, fiber])
             if display_val is None:
-                z_row.append(HEATMAP_MISSING_Z)
+                z_row.append(None)
+                missing_cells.append((j, i))
                 value_text = f"{MISSING_VALUE_LABEL} (missing)"
             else:
                 color_val = _json_safe_number(color_matrix.at[impact, fiber])
-                z_row.append(color_val if color_val is not None else HEATMAP_MISSING_Z)
-                value_text = _format_display_number(display_val)
+                if color_val is None:
+                    z_row.append(None)
+                    missing_cells.append((j, i))
+                    value_text = f"{MISSING_VALUE_LABEL} (missing)"
+                else:
+                    z_row.append(color_val)
+                    value_text = _format_display_number(display_val)
             hover_row.append([impact_full, fiber, value_text])
         z.append(z_row)
         hover_data.append(hover_row)
@@ -1797,10 +1917,11 @@ def build_heatmap_figure(
         z=z,
         x=x_full,
         y=y_full,
-        zmin=HEATMAP_MISSING_Z,
+        zmin=0.0,
         zmax=1.0,
-        colorscale=HEATMAP_COLORSCALE,
+        colorscale=HEATMAP_DATA_COLORSCALE,
         showscale=False,
+        hoverongaps=True,
         customdata=hover_data,
         hovertemplate=(
             "<b>%{customdata[0]}</b><br>"
@@ -1841,6 +1962,7 @@ def build_heatmap_figure(
         margin=dims["margin"],
         paper_bgcolor="white",
         plot_bgcolor="white",
+        shapes=_heatmap_missing_cell_shapes(missing_cells),
         xaxis=dict(
             tickmode="array",
             tickvals=x_full,
@@ -2298,7 +2420,9 @@ def build_radar_figure(
         radialaxis = dict(
             visible=True,
             range=[-1.0, 1.0],
-            tickformat=RADAR_RADIAL_TICK_FMT,
+            tickmode="array",
+            tickvals=RADAR_ABS_MAX_TICKVALS,
+            ticktext=RADAR_ABS_MAX_TICKTEXT,
             gridcolor="#e0e0e0",
             linecolor="#cccccc",
         )
@@ -3067,6 +3191,31 @@ _CHECKBOX_PANEL_CSS = """
     color: #c0392b !important;
     font-weight: 700;
 }
+.lca-heatmap-missing-sample {
+    display: inline-block;
+    width: 1.15em;
+    height: 1.15em;
+    background: #fff;
+    border: 1px solid #e0e0e0;
+    vertical-align: -0.15em;
+    margin-right: 0.2em;
+    position: relative;
+    overflow: hidden;
+}
+.lca-heatmap-missing-sample::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+        to top right,
+        transparent 0,
+        transparent calc(50% - 0.5px),
+        #aaa calc(50% - 0.5px),
+        #aaa calc(50% + 0.5px),
+        transparent calc(50% + 0.5px),
+        transparent 100%
+    );
+}
 .lca-hover-panel {
     position: relative;
     display: inline-block;
@@ -3524,8 +3673,8 @@ def _normalization_hover_panel_ui(
     body = ui.div(
         ui.tags.p(
             "Choose a normalization method. Baseline and asinh use the fiber "
-            "selected under Reference Fiber for Normalization. Per-impact "
-            "normalization does not use a reference fiber.",
+            "selected under Reference Fiber for Normalization. Range and "
+            "per-impact normalization do not use a reference fiber.",
             class_="lca-formula-lead mb-2",
         ),
         ui.div(
@@ -3712,8 +3861,8 @@ def _heatmap_guide_panel_ui() -> ui.Tag:
                 "Light to dark blue = lowest to highest value within that impact row.",
             ),
             ui.tags.li(
-                ui.tags.strong("Black cells"),
-                " = missing / empty value in the dataset.",
+                ui.tags.span(class_="lca-heatmap-missing-sample", **{"aria-hidden": "true"}),
+                " = missing or empty value in the dataset.",
             ),
             ui.tags.li("Hover a cell for the full name and exact value."),
             class_="lca-formula-legend mb-0",
@@ -4049,9 +4198,9 @@ def server(input, output, session):
 
     @reactive.calc
     def baseline_ref_inactive() -> bool:
-        if _norm_method_is_per_impact(_norm_method.get()):
+        if _baseline_ref_panel_inactive(_norm_method.get()):
             return True
-        return _norm_method_is_per_impact(comparison_table_norm_method())
+        return _baseline_ref_panel_inactive(comparison_table_norm_method())
 
     @output
     @render.ui
