@@ -1,6 +1,7 @@
 """LCA fiber comparison dashboard (Shiny + Plotly)."""
 
 from __future__ import annotations
+import base64
 import io
 import os
 import re
@@ -15,12 +16,20 @@ from plotly.subplots import make_subplots
 from shiny import App, reactive, render, ui
 from shinywidgets import output_widget, render_plotly
 
+APP_ROOT = Path(__file__).resolve().parent
 DATA_FILE = Path(os.getcwd()) / "Dataset" / "processed" / "processed-data.csv"
+
+# ── App constants ────────────────────────────────────────────────────────────
 
 CHARTS_PER_ROW = 2
 PIE_HOLE = 0.4
 BAR_COLORS = px.colors.qualitative.Set2
 BAR_LABEL_MAX_LEN = 14
+_GROUPED_BAR_IMPACT_LABEL_FONT_SIZE = 10
+_GROUPED_BAR_IMPACT_LABEL_CHAR_PX = 5.8
+_GROUPED_BAR_IMPACT_LABEL_LINE_PX = 13
+_GROUPED_BAR_IMPACT_LABEL_MIN_MARGIN = 72
+_GROUPED_BAR_IMPACT_PLOT_WIDTH_PX = 760
 BAR_Y_LABEL_RAW = "Raw"
 BAR_Y_LABEL_NORMALIZED = "Normalized"
 BAR_EMPTY_SELECTION_MSG = (
@@ -45,42 +54,23 @@ DATA_POLL_SECONDS = 10
 SELECTION_DEBOUNCE_SECONDS = 0.4
 
 NORM_METHOD_RAW = "raw"
-NORM_METHOD_MINMAX = "minmax"
 NORM_METHOD_ABS_MAX = "abs_max"
-NORM_METHOD_BASELINE = "baseline"
-NORM_METHOD_ASINH = "asinh"
+NORM_METHOD_PER_IMPACT = NORM_METHOD_ABS_MAX
 NORM_METHOD_CHOICES = {
-    NORM_METHOD_RAW: "Raw values",
-    NORM_METHOD_MINMAX: "Range normalization (0–100% per impact)",
-    NORM_METHOD_ABS_MAX: "Per-impact normalization (−1 to 1)",
-    NORM_METHOD_BASELINE: "Baseline normalization (ratio to reference fiber)",
-    NORM_METHOD_ASINH: "Asinh baseline scaling",
+    NORM_METHOD_RAW: "Raw data",
+    NORM_METHOD_ABS_MAX: "Normalized data",
 }
-
-
-def _baseline_ref_panel_inactive(method: str) -> bool:
-    """Grey out reference fiber when the selected norm method does not use it."""
-    return not _norm_method_requires_baseline(method) and method != NORM_METHOD_RAW
-
-
-def _norm_method_requires_baseline(method: str) -> bool:
-    return method in (NORM_METHOD_BASELINE, NORM_METHOD_ASINH)
 
 
 def _normalization_supported(
     fiber_count: int,
     *,
     method: str,
-    baseline: str | None,
 ) -> bool:
     """Whether normalized values can be computed for the current fiber count."""
     if method == NORM_METHOD_RAW:
         return False
-    if fiber_count < 1:
-        return False
-    if _norm_method_requires_baseline(method):
-        return bool(baseline)
-    return True
+    return fiber_count >= 1
 
 
 DISPLAY_DECIMALS = 3
@@ -92,12 +82,8 @@ RADAR_ABS_MAX_TICKTEXT = ["-1", "-0.5", "0", "0.5", "1"]
 
 def _bar_y_tickformat(norm_method: str) -> str:
     """Bar chart value-axis tick labels (less precision than table display)."""
-    if norm_method == NORM_METHOD_MINMAX:
-        return ".0f"
     if norm_method == NORM_METHOD_ABS_MAX:
         return ".1f"
-    if norm_method in (NORM_METHOD_BASELINE, NORM_METHOD_ASINH):
-        return ".2f"
     return ".4g"
 
 
@@ -368,21 +354,14 @@ INITIAL_DATA = load_processed_data(DATA_FILE)
 
 @dataclass
 class AppliedState:
-    """Snapshot of sidebar selections; charts/tables read fibers, impacts, baseline."""
+    """Snapshot of sidebar selections; charts/tables read fibers and impacts."""
 
     fibers: list[str]
     impacts: list[str]
-    baseline: str | None
 
 
 def _initial_applied_state() -> AppliedState:
-    return AppliedState(
-        fibers=[],
-        impacts=[],
-        baseline=(
-            INITIAL_DATA.fiber_cols[0] if INITIAL_DATA.fiber_cols else None
-        ),
-    )
+    return AppliedState(fibers=[], impacts=[])
 
 
 @dataclass(frozen=True)
@@ -400,6 +379,8 @@ CHART_KINDS: tuple[ChartKind, ...] = (
     ChartKind("dataframe", "DataFrame", uses_plotly=False),
     ChartKind("heatmap", "Heatmap", supports_normalization=False),
     ChartKind("bar", "Bar Chart"),
+    ChartKind("bar_vertical", "Vertical Barchart"),
+    ChartKind("bar_horizontal", "Horizontal Barchart"),
     ChartKind("radar", "Radar", min_impacts=3),
 )
 
@@ -416,26 +397,39 @@ IMPACT_SECTIONS: dict[str, dict[str, object]] = {
     "resources": {
         "tab": "Resources Consumption",
         "impacts": [
-            "Fossil depletion",
+            "Freshwater consumption",
             "Land Use",
+            "Fossil depletion",
         ],
     },
     "water": {
-        "tab": "Water Consumption & Impacts",
+        "tab": "Ecosystem Impacts",
         "impacts": [
-            "Freshwater consumption",
             "Freshwater ecotoxicity",
             "Freshwater eutrophication",
-        ],
-    },
-    "toxicity_air": {
-        "tab": "Toxicity & Air Quality",
-        "impacts": [
-            "Human toxicity - noncancer",
-            "Human toxicity - Cancer",
             "Acidification",
         ],
     },
+    "toxicity_air": {
+        "tab": "Human Health Impacts",
+        "impacts": [
+            "Human toxicity - Cancer",
+            "Human toxicity - noncancer",
+        ],
+    },
+}
+
+IMPACT_DISPLAY_NAMES: dict[str, str] = {
+    "climate change": "Climate Change",
+    "climate change incl biogenic carbon": "Climate Change with Biogenic Carbon",
+    "freshwater consumption": "Water Use",
+    "land use": "Land Use",
+    "fossil depletion": "Fossil Depletion",
+    "freshwater ecotoxicity": "Freshwater Ecotoxicity",
+    "freshwater eutrophication": "Freshwater Eutrophication",
+    "acidification": "Acidification",
+    "human toxicity - cancer": "Human Toxicity (Cancer)",
+    "human toxicity - noncancer": "Human Toxicity (Non-Cancer)",
 }
 
 MAIN_TAB_TO_SECTION: dict[str, str] = {
@@ -444,6 +438,145 @@ MAIN_TAB_TO_SECTION: dict[str, str] = {
     for name in (key, str(spec["tab"]))
 }
 
+TAB_HOME = "home"
+TAB_COMPARISON = "comparison_table"
+TAB_ALL_IMPACTS = "all_impacts"
+TAB_METHOD = "method"
+TAB_TEAM = "team_contributions"
+APP_TITLE = "Life Cycle Assessment of Select Textile Fibers"
+
+_TEAM_MEMBER = dict[str, str | list[str]]
+_TEAM_ORG = dict[str, str | list[_TEAM_MEMBER] | None]
+
+TEAM_ORGANIZATIONS: tuple[_TEAM_ORG, ...] = (
+    {
+        "id": "nc_state",
+        "name": "North Carolina State University",
+        "logo": "NC-State-Logo.png",
+        "website": "https://www.ncsu.edu/",
+        "members": [
+            {
+                "name": "Dr. Karen Leonas",
+                "role": "Lead PI and Project Lead",
+                "contributions": ["LCA model development"],
+            },
+            {
+                "name": "Dr. Zahra Saki",
+                "role": "Co-PI",
+                "contributions": ["Data visualization", "Website development"],
+            },
+            {
+                "name": "AYA [Last Name]",
+                "role": "Graduate Student",
+                "contributions": ["LCA model development"],
+            },
+            {
+                "name": "Gloria [Last Name]",
+                "role": "Graduate Student",
+                "contributions": ["LCA model development"],
+            },
+            {
+                "name": "Ehsan Faghih",
+                "role": "Graduate Student",
+                "contributions": ["Data visualization", "Website development"],
+            },
+        ],
+    },
+    {
+        "id": "textile_engine",
+        "name": "Textile Innovation Engine",
+        "logo": "Engine-logo.png",
+        "website": "https://textileinnovationengine.org/",
+        "members": None,
+    },
+    {
+        "id": "walmart",
+        "name": "Walmart Foundation",
+        "logo": "walmart-logo.webp",
+        "website": "https://www.walmart.org/",
+        "members": None,
+    },
+    {
+        "id": "nlr",
+        "name": "National Recycling Laboratory",
+        "logo": "NLR-logo.jpg",
+        "website": "https://www.nlr.gov/",
+        "members": None,
+    },
+)
+
+_HOME_SECTION_DESCRIPTIONS: dict[str, str] = {
+    "climate": "Climate Change and biogenic carbon for selected fibers.",
+    "resources": "Water Use, Land Use, and Fossil Depletion by fiber type.",
+    "water": "Freshwater Ecotoxicity, Eutrophication, and Acidification.",
+    "toxicity_air": "Human Toxicity (Cancer) and Human Toxicity (Non-Cancer).",
+}
+
+HOME_SECTION_CARDS: tuple[dict[str, str], ...] = tuple(
+    {
+        "button_id": f"home_nav_{section_key}",
+        "tab": section_key,
+        "title": str(IMPACT_SECTIONS[section_key]["tab"]),
+        "description": _HOME_SECTION_DESCRIPTIONS[section_key],
+    }
+    for section_key in IMPACT_SECTIONS
+)
+
+NORM_METHOD_RADAR_ID = "norm_method_radar"
+NORM_METHOD_BAR_ALL_ID = "norm_method_bar_all"
+
+
+def _norm_radio_ids() -> tuple[str, ...]:
+    return (
+        NORM_METHOD_RADAR_ID,
+        NORM_METHOD_BAR_ALL_ID,
+        *(f"norm_method_{section_key}" for section_key in IMPACT_SECTIONS),
+    )
+
+
+# ── UI styles (shared gradients) ─────────────────────────────────────────────
+
+_GRADIENT_TAB_DEFAULT = (
+    "radial-gradient(ellipse 120% 100% at 50% 30%, "
+    "#f8fbff 0%, #e7f1ff 38%, #cfe2ff 72%, #b8d4fe 100%)"
+)
+_GRADIENT_TAB_HOVER = (
+    "radial-gradient(ellipse 120% 100% at 50% 28%, "
+    "#ffffff 0%, #edf4ff 40%, #d7e9ff 100%)"
+)
+_GRADIENT_TAB_ACTIVE = (
+    "radial-gradient(ellipse 120% 100% at 50% 28%, "
+    "#4d9bff 0%, #0d6efd 38%, #0a58ca 72%, #084298 100%)"
+)
+_GRADIENT_TAB_ACTIVE_HOVER = (
+    "radial-gradient(ellipse 120% 100% at 50% 26%, "
+    "#5aa3ff 0%, #1a75ff 38%, #0b5ed7 72%, #084298 100%)"
+)
+_GRADIENT_HOME_CARD = (
+    "radial-gradient(ellipse 120% 110% at 50% 18%, "
+    "#ffffff 0%, #f8fbff 32%, #eef4ff 68%, #e3edff 100%)"
+)
+_GRADIENT_HOME_CARD_HOVER = (
+    "radial-gradient(ellipse 120% 110% at 50% 15%, "
+    "#ffffff 0%, #f3f8ff 30%, #e7f1ff 65%, #d7e9ff 100%)"
+)
+_GRADIENT_HOME_GROUP = (
+    "radial-gradient(ellipse 130% 120% at 50% 12%, "
+    "#f7faff 0%, #edf3ff 40%, #e2ebff 100%)"
+)
+_GRADIENT_HOME_SUBCARD = (
+    "radial-gradient(ellipse 115% 105% at 50% 20%, "
+    "#ffffff 0%, #fafcff 40%, #f0f6ff 100%)"
+)
+_GRADIENT_HOME_SUBCARD_HOVER = (
+    "radial-gradient(ellipse 115% 105% at 50% 15%, "
+    "#ffffff 0%, #f5f9ff 35%, #e8f2ff 100%)"
+)
+_GRADIENT_SIDEBAR_HEADER = (
+    "radial-gradient(ellipse 120% 110% at 50% 18%, "
+    "#ffffff 0%, #f8fbff 35%, #f0f6ff 72%, #e8f2ff 100%)"
+)
+
 
 def _section_tab_nav_css() -> str:
     """Fading blue pill background for all main nav tabs."""
@@ -451,13 +584,7 @@ def _section_tab_nav_css() -> str:
     active_sel = "#main_tabs .nav-link.active"
     return f"""
 {base_sel} {{
-  background: radial-gradient(
-    ellipse 120% 100% at 50% 30%,
-    #f8fbff 0%,
-    #e7f1ff 38%,
-    #cfe2ff 72%,
-    #b8d4fe 100%
-  );
+  background: {_GRADIENT_TAB_DEFAULT};
   border: 1px solid #b6d4fe;
   border-radius: 0.5rem 0.5rem 0 0;
   color: #0a58ca;
@@ -466,63 +593,74 @@ def _section_tab_nav_css() -> str:
   margin-right: 0.25rem;
 }}
 {base_sel}:hover:not(.active) {{
-  background: radial-gradient(
-    ellipse 120% 100% at 50% 28%,
-    #ffffff 0%,
-    #edf4ff 40%,
-    #d7e9ff 100%
-  );
+  background: {_GRADIENT_TAB_HOVER};
   color: #084298;
   border-color: #9ec5fe;
 }}
 {active_sel} {{
-  background: radial-gradient(
-    ellipse 120% 100% at 50% 25%,
-    #ffffff 0%,
-    #eef5ff 35%,
-    #d7e9ff 65%,
-    #b6d4fe 100%
-  );
-  color: #084298;
-  border-color: #9ec5fe;
+  background: {_GRADIENT_TAB_ACTIVE};
+  color: #ffffff;
+  border-color: #084298;
   border-bottom-color: var(--bs-body-bg, #fff);
+  box-shadow: 0 2px 6px rgba(8, 66, 152, 0.22);
+}}
+{active_sel}:hover,
+{active_sel}:focus {{
+  color: #ffffff;
+  background: {_GRADIENT_TAB_ACTIVE_HOVER};
+  border-color: #084298;
 }}
 """
 
 
 def _apply_button_css() -> str:
     """Apply button matches main nav tab pill styling."""
-    return """
-.lca-apply-btn.btn {
+    return f"""
+.lca-apply-btn.btn {{
   width: 100%;
-  margin-bottom: 0.45rem;
-  background: radial-gradient(
-    ellipse 120% 100% at 50% 30%,
-    #f8fbff 0%,
-    #e7f1ff 38%,
-    #cfe2ff 72%,
-    #b8d4fe 100%
-  );
+  margin-top: 0.45rem;
+  background: {_GRADIENT_TAB_DEFAULT};
   border: 1px solid #b6d4fe;
   border-radius: 0.5rem;
   color: #0a58ca;
   font-weight: 600;
   padding: 0.5rem 1rem;
-}
+}}
 .lca-apply-btn.btn:hover,
-.lca-apply-btn.btn:focus {
-  background: radial-gradient(
-    ellipse 120% 100% at 50% 28%,
-    #ffffff 0%,
-    #edf4ff 40%,
-    #d7e9ff 100%
-  );
+.lca-apply-btn.btn:focus {{
+  background: {_GRADIENT_TAB_HOVER};
   color: #084298;
   border-color: #9ec5fe;
   box-shadow: 0 0 0 0.12rem rgba(13, 110, 253, 0.2);
-}
-.lca-applied-hidden {
+}}
+.lca-applied-hidden {{
   display: none !important;
+}}
+"""
+
+
+def _app_title_css() -> str:
+    """Navbar title styled as a plain link-like control."""
+    return """
+.navbar .lca-app-title-btn.btn {
+  color: #0a58ca !important;
+  font-size: 1.25rem;
+  font-weight: 600;
+  line-height: 1.2;
+  padding: 0;
+  border: none;
+  background: transparent !important;
+  box-shadow: none !important;
+  text-decoration: none;
+  white-space: normal;
+  text-align: left;
+}
+.navbar .lca-app-title-btn.btn:hover,
+.navbar .lca-app-title-btn.btn:focus {
+  color: #084298 !important;
+  text-decoration: underline;
+  background: transparent !important;
+  box-shadow: none !important;
 }
 """
 
@@ -571,31 +709,15 @@ def _chart_plot_output(output_id: str) -> ui.Tag:
     )
 
 
-_BASELINE_REF_INACTIVE_CSS = """
-#normalize_ref_panel.lca-baseline-inactive {
-    opacity: 0.72;
-}
-#normalize_ref_panel.lca-baseline-inactive .lca-checkbox-panel-title {
-    color: #6c757d;
-}
-#normalize_ref_panel.lca-baseline-inactive .selectize-control {
-    pointer-events: none;
-}
-#normalize_ref_panel.lca-baseline-inactive .selectize-control.single .selectize-input {
-    background: #e9ecef !important;
-    border-color: #ced4da;
-    color: #6c757d;
-    cursor: not-allowed;
-}
-"""
-
-
 def _all_impacts_chart_kind_choices() -> dict[str, str]:
-    return {
-        kind.id: kind.label
-        for kind in CHART_KINDS
-        if kind.id in ("radar", "heatmap")
-    }
+    labels = {kind.id: kind.label for kind in CHART_KINDS}
+    order = ("heatmap", "radar", "bar_vertical", "bar_horizontal")
+    return {key: labels[key] for key in order}
+
+
+def _impact_display_label(name: str) -> str:
+    key = str(name).strip().lower()
+    return IMPACT_DISPLAY_NAMES.get(key, _normalize_catalog_label(str(name)))
 
 
 def _resolve_impacts_in_data(
@@ -619,8 +741,11 @@ def _section_impact_names(section_key: str, available: list[str]) -> list[str]:
 def _section_impact_display_labels(
     section_key: str, available: list[str]
 ) -> list[str]:
-    """Normalized labels for impacts present in the dataset for this section."""
-    return _section_impact_names(section_key, available)
+    """User-facing labels for impacts present in the dataset for this section."""
+    return [
+        _impact_display_label(name)
+        for name in _section_impact_names(section_key, available)
+    ]
 
 
 def _section_impacts_missing_from_data(
@@ -632,7 +757,7 @@ def _section_impacts_missing_from_data(
         for name in _section_impact_names(section_key, available)
     }
     return [
-        _normalize_catalog_label(str(name))
+        _impact_display_label(str(name))
         for name in spec["impacts"]
         if str(name).strip().lower() not in matched_lower
     ]
@@ -879,11 +1004,11 @@ def _bar_y_axis_range(
     pad = max(span * 0.15, 0.03 * max(abs(mn), abs(mx), 1.0))
 
     if mn >= 0:
-        lo = 0.0 if norm_method == NORM_METHOD_MINMAX else mn - pad
+        lo = mn - pad
         hi = mx + pad
     elif mx <= 0:
         lo = mn - pad
-        hi = 0.0 if norm_method == NORM_METHOD_MINMAX else mx + pad
+        hi = mx + pad
     else:
         lo = min(mn - pad, -pad * 0.5)
         hi = max(mx + pad, pad * 0.5)
@@ -919,12 +1044,17 @@ def _apply_bar_y_axis_range(
     col: int | None = None,
     plot_px: int | None = None,
     value_label_px: int = 0,
+    orientation: str = "v",
 ) -> None:
     axis_kw: dict = dict(row=row, col=col) if row is not None and col is not None else {}
     tickformat = _bar_y_tickformat(norm_method)
     axis_range = _bar_y_axis_range(values, norm_method=norm_method)
     if axis_range is None:
-        fig.update_yaxes(tickformat=tickformat, **axis_kw)
+        axis_update = dict(tickformat=tickformat, **axis_kw)
+        if orientation == "h":
+            fig.update_xaxes(**axis_update)
+        else:
+            fig.update_yaxes(**axis_update)
         return
     if plot_px and value_label_px:
         axis_range = _bar_axis_range_with_value_label_pad(
@@ -943,7 +1073,10 @@ def _apply_bar_y_axis_range(
         lo, hi = axis_range
         axis_update["tickmode"] = "array"
         axis_update["tickvals"] = _bar_abs_max_axis_tickvals(lo, hi, values)
-    fig.update_yaxes(**axis_update)
+    if orientation == "h":
+        fig.update_xaxes(**axis_update)
+    else:
+        fig.update_yaxes(**axis_update)
 
 
 def _plotly_widget(fig: go.Figure) -> go.FigureWidget:
@@ -1233,6 +1366,15 @@ def _bar_x_label_height_px(labels: list[str], *, max_len: int = BAR_LABEL_MAX_LE
     return max(100, int(longest * 7.5) + 40)
 
 
+def _bar_y_label_width_px(labels: list[str], *, max_len: int = BAR_LABEL_MAX_LEN) -> int:
+    """Pixels needed left of a subplot for horizontal category labels."""
+    longest = max(
+        (min(len(str(label).strip()), max_len) for label in labels),
+        default=max_len,
+    )
+    return max(120, int(longest * 6.5) + 60)
+
+
 def _bar_value_label_height_px() -> int:
     """Pixels needed above bar tops for outside value labels."""
     return 28
@@ -1300,11 +1442,24 @@ def _apply_bar_fiber_labels(
     *,
     row: int | None = None,
     col: int | None = None,
+    orientation: str = "v",
 ) -> None:
-    """Vertical fiber labels below the plot; missing values use red text."""
+    """Category labels on the non-value axis; missing values use red text."""
     subplot_kw: dict = (
         dict(row=row, col=col) if row is not None and col is not None else {}
     )
+    if orientation == "h":
+        fig.update_yaxes(
+            tickmode="array",
+            tickvals=full_labels,
+            ticktext=display_labels,
+            showgrid=False,
+            showline=False,
+            tickfont=dict(size=10, color="#444"),
+            **subplot_kw,
+        )
+        return
+
     fig.update_xaxes(
         showticklabels=False,
         showgrid=False,
@@ -1329,7 +1484,348 @@ def _apply_bar_fiber_labels(
         )
 
 
-def _bar_trace(labels: list[str], values: list[float | None]) -> go.Bar:
+def _grouped_bar_fiber_trace(
+    *,
+    name: str,
+    x: list[str],
+    y: list[float | None],
+    color_idx: int,
+    orientation: str = "v",
+) -> go.Bar:
+    """One trace per fiber; bars cluster at each impact category."""
+    colors: list[str] = []
+    texts: list[str] = []
+    hover_values: list[str] = []
+    safe_values: list[float | None] = []
+
+    for value in y:
+        safe = _json_safe_number(value)
+        safe_values.append(safe)
+        if safe is None:
+            colors.append("rgba(210, 210, 210, 0.35)")
+            texts.append(MISSING_VALUE_LABEL)
+            hover_values.append(f"{MISSING_VALUE_LABEL} (missing)")
+        else:
+            colors.append(BAR_COLORS[color_idx % len(BAR_COLORS)])
+            texts.append(_format_display_number(safe))
+            hover_values.append(_format_display_number(safe))
+
+    category_key = "%{y}" if orientation == "h" else "%{x}"
+    bar_kw: dict = (
+        dict(y=x, x=safe_values, orientation="h")
+        if orientation == "h"
+        else dict(x=x, y=safe_values)
+    )
+
+    return go.Bar(
+        name=name,
+        customdata=hover_values,
+        marker=dict(
+            color=colors,
+            line=dict(color="rgba(255,255,255,0.9)", width=1.5),
+            opacity=0.92,
+            cornerradius=6,
+        ),
+        text=texts,
+        textposition="outside",
+        textfont=dict(size=11, color="#444"),
+        cliponaxis=False,
+        hovertemplate=(
+            f"<b>{category_key}</b><br>"
+            "<b>%{fullData.name}</b><br>"
+            "Value: %{customdata}<extra></extra>"
+        ),
+        **bar_kw,
+    )
+
+
+def _bar_impact_full_labels(
+    impacts: list[str],
+    data: pd.DataFrame,
+    impact_col: str,
+) -> list[str]:
+    """Full impact names for grouped bar chart category positions."""
+    full: list[str] = []
+    for impact in impacts:
+        row = _row_for_impact(data, impact_col, impact)
+        if row is None:
+            full.append(str(impact).strip())
+        else:
+            full.append(_impact_label(impact, row, include_units=False))
+    return full
+
+
+def _word_wrap_lines(text: str, max_chars: int) -> list[str]:
+    """Wrap on word boundaries; single overlong tokens are hard-split."""
+    text = str(text).strip()
+    if not text:
+        return []
+    max_chars = max(4, max_chars)
+    words = text.split()
+    lines: list[str] = []
+    current: list[str] = []
+    current_len = 0
+
+    def _flush() -> None:
+        nonlocal current, current_len
+        if current:
+            lines.append(" ".join(current))
+            current = []
+            current_len = 0
+
+    for word in words:
+        if len(word) > max_chars:
+            _flush()
+            start = 0
+            while start < len(word):
+                lines.append(word[start : start + max_chars])
+                start += max_chars
+            continue
+        extra = len(word) if not current else 1 + len(word)
+        if current_len + extra <= max_chars:
+            current.append(word)
+            current_len += extra
+        else:
+            _flush()
+            current = [word]
+            current_len = len(word)
+    _flush()
+    return lines or [text[:max_chars]]
+
+
+def _wrap_grouped_impact_label(
+    text: str,
+    *,
+    max_chars_per_line: int,
+    max_lines: int,
+) -> str:
+    """Wrap impact text into lines joined with <br> for Plotly labels."""
+    text = str(text).strip()
+    if not text:
+        return ""
+    max_lines = max(1, max_lines)
+    max_chars = max(4, max_chars_per_line)
+    for _ in range(48):
+        lines = _word_wrap_lines(text, max_chars)
+        if len(lines) <= max_lines:
+            return "<br>".join(lines)
+        max_chars += 2
+    return "<br>".join(_word_wrap_lines(text, max_chars)[:max_lines])
+
+
+def _grouped_bar_bundle_width_px(n_bundles: int, plot_width_px: int) -> int:
+    if n_bundles <= 0:
+        return plot_width_px
+    return max(48, int(plot_width_px / n_bundles * 0.82))
+
+
+def _grouped_bar_bundle_height_px(n_fibers: int) -> int:
+    return max(44, 22 * n_fibers)
+
+
+def _wrapped_label_vertical_extent_px(wrapped: str) -> int:
+    """Pixels below the plot for textangle=-90 impact labels."""
+    lines = wrapped.split("<br>") if wrapped else [""]
+    longest = max((len(line) for line in lines), default=0)
+    return int(longest * _GROUPED_BAR_IMPACT_LABEL_CHAR_PX + 16)
+
+
+def _wrapped_label_horizontal_extent_px(wrapped: str) -> int:
+    """Horizontal span of wrapped vertical impact labels (textangle=-90)."""
+    lines = wrapped.split("<br>") if wrapped else [""]
+    return int(len(lines) * _GROUPED_BAR_IMPACT_LABEL_LINE_PX + 8)
+
+
+def _wrapped_label_left_extent_px(wrapped: str) -> int:
+    """Left margin for horizontal bar multiline y-axis labels."""
+    lines = wrapped.split("<br>") if wrapped else [""]
+    longest = max((len(line) for line in lines), default=0)
+    return int(longest * _GROUPED_BAR_IMPACT_LABEL_CHAR_PX + 16)
+
+
+def _wrapped_label_row_height_px(wrapped: str) -> int:
+    """Vertical space per impact row for horizontal bar labels."""
+    lines = wrapped.split("<br>") if wrapped else [""]
+    return int(len(lines) * _GROUPED_BAR_IMPACT_LABEL_LINE_PX + 8)
+
+
+def _grouped_bar_impact_label_layout(
+    full_labels: list[str],
+    *,
+    orientation: str,
+    n_fibers: int,
+    plot_width_px: int = _GROUPED_BAR_IMPACT_PLOT_WIDTH_PX,
+) -> tuple[list[str], int]:
+    """Wrap impact names within bundle bounds; return labels and margin px."""
+    n = len(full_labels)
+    if n == 0:
+        return [], _GROUPED_BAR_IMPACT_LABEL_MIN_MARGIN
+
+    if orientation == "h":
+        bundle_px = _grouped_bar_bundle_height_px(n_fibers)
+        max_lines = max(1, bundle_px // _GROUPED_BAR_IMPACT_LABEL_LINE_PX)
+        margin_px = 132
+        max_chars = max(12, int(margin_px / _GROUPED_BAR_IMPACT_LABEL_CHAR_PX))
+        wrapped: list[str] = []
+        for _ in range(3):
+            wrapped = [
+                _wrap_grouped_impact_label(
+                    label,
+                    max_chars_per_line=max_chars,
+                    max_lines=max_lines,
+                )
+                for label in full_labels
+            ]
+            margin_px = max(
+                _GROUPED_BAR_IMPACT_LABEL_MIN_MARGIN,
+                max(_wrapped_label_left_extent_px(w) for w in wrapped) + 28,
+            )
+            max_chars = max(12, int(margin_px / _GROUPED_BAR_IMPACT_LABEL_CHAR_PX))
+        return wrapped, margin_px
+
+    bundle_px = _grouped_bar_bundle_width_px(n, plot_width_px)
+    max_lines = max(1, bundle_px // _GROUPED_BAR_IMPACT_LABEL_LINE_PX)
+    margin_px = 100
+    max_chars = max(8, int(margin_px / _GROUPED_BAR_IMPACT_LABEL_CHAR_PX))
+    wrapped = []
+    for _ in range(3):
+        max_lines = max(
+            1,
+            min(
+                max_lines,
+                bundle_px // _GROUPED_BAR_IMPACT_LABEL_LINE_PX,
+            ),
+        )
+        wrapped = [
+            _wrap_grouped_impact_label(
+                label,
+                max_chars_per_line=max_chars,
+                max_lines=max_lines,
+            )
+            for label in full_labels
+        ]
+        too_wide = any(
+            _wrapped_label_horizontal_extent_px(w) > bundle_px for w in wrapped
+        )
+        if too_wide and max_lines > 1:
+            max_lines = max(1, max_lines - 1)
+            continue
+        margin_px = max(
+            _GROUPED_BAR_IMPACT_LABEL_MIN_MARGIN,
+            max(_wrapped_label_vertical_extent_px(w) for w in wrapped) + 28,
+        )
+        max_chars = max(8, int(margin_px / _GROUPED_BAR_IMPACT_LABEL_CHAR_PX))
+    return wrapped, margin_px
+
+
+def _apply_grouped_bar_impact_labels(
+    fig: go.Figure,
+    full_labels: list[str],
+    display_labels: list[str],
+    *,
+    orientation: str = "v",
+) -> None:
+    """Multi-line impact labels that stay inside each bundle (between dotted lines)."""
+    if orientation == "h":
+        fig.update_yaxes(
+            tickmode="array",
+            tickvals=full_labels,
+            ticktext=display_labels,
+            showgrid=False,
+            showline=False,
+            tickfont=dict(
+                size=_GROUPED_BAR_IMPACT_LABEL_FONT_SIZE,
+                color="#444",
+            ),
+        )
+        return
+
+    fig.update_xaxes(
+        tickmode="array",
+        tickvals=full_labels,
+        ticktext=[""] * len(full_labels),
+        showticklabels=False,
+        showgrid=False,
+        showline=False,
+    )
+    for label, disp in zip(full_labels, display_labels):
+        fig.add_annotation(
+            x=label,
+            y=-0.015,
+            yref="y domain",
+            text=disp,
+            textangle=-90,
+            xanchor="center",
+            yanchor="top",
+            showarrow=False,
+            font=dict(
+                size=_GROUPED_BAR_IMPACT_LABEL_FONT_SIZE,
+                color="#333333",
+            ),
+        )
+
+
+def _bar_fiber_legend() -> dict:
+    return dict(
+        orientation="h",
+        yanchor="bottom",
+        y=1.02,
+        xanchor="center",
+        x=0.5,
+        font=dict(size=10),
+    )
+
+
+def _apply_grouped_bar_bundle_separators(
+    fig: go.Figure,
+    n_bundles: int,
+    *,
+    orientation: str = "v",
+) -> None:
+    """Dotted lines between adjacent bar bundles."""
+    if n_bundles < 2:
+        return
+
+    shapes = list(fig.layout.shapes or ())
+    for i in range(n_bundles - 1):
+        pos = i + 0.5
+        if orientation == "h":
+            shapes.append(
+                dict(
+                    type="line",
+                    x0=0,
+                    x1=1,
+                    y0=pos,
+                    y1=pos,
+                    xref="paper",
+                    yref="y",
+                    line=dict(color="#c0c0c0", width=1, dash="dot"),
+                    layer="below",
+                )
+            )
+        else:
+            shapes.append(
+                dict(
+                    type="line",
+                    x0=pos,
+                    x1=pos,
+                    y0=0,
+                    y1=1,
+                    xref="x",
+                    yref="y domain",
+                    line=dict(color="#c0c0c0", width=1, dash="dot"),
+                    layer="below",
+                )
+            )
+    fig.update_layout(shapes=shapes)
+
+
+def _bar_trace(
+    labels: list[str],
+    values: list[float | None],
+    *,
+    orientation: str = "v",
+) -> go.Bar:
     colors: list[str] = []
     safe_values: list[float | None] = []
     text: list[str] = []
@@ -1347,9 +1843,14 @@ def _bar_trace(labels: list[str], values: list[float | None]) -> go.Bar:
             text.append(_format_display_number(safe))
             hover_values.append(_format_display_number(safe))
 
+    category_key = "%{y}" if orientation == "h" else "%{x}"
+    bar_kw: dict = (
+        dict(y=labels, x=safe_values, orientation="h")
+        if orientation == "h"
+        else dict(x=labels, y=safe_values)
+    )
+
     return go.Bar(
-        x=labels,
-        y=safe_values,
         customdata=hover_values,
         marker=dict(
             color=colors,
@@ -1362,9 +1863,10 @@ def _bar_trace(labels: list[str], values: list[float | None]) -> go.Bar:
         textfont=dict(size=11, color="#444"),
         cliponaxis=False,
         hovertemplate=(
-            "<b>%{x}</b><br>"
+            f"<b>{category_key}</b><br>"
             "Value: %{customdata}<extra></extra>"
         ),
+        **bar_kw,
     )
 
 
@@ -1373,26 +1875,19 @@ def _apply_bar_chart_theme(
     *,
     row: int | None = None,
     col: int | None = None,
+    orientation: str = "v",
 ) -> None:
     """White plot background and light grid lines."""
     axis_kw: dict = dict(row=row, col=col) if row is not None and col is not None else {}
 
     if not axis_kw:
         fig.update_layout(paper_bgcolor="white", plot_bgcolor="white")
-    fig.update_xaxes(
-        showline=False,
-        mirror=False,
-        showgrid=False,
-        tickfont=dict(size=10, color="#444"),
-        **axis_kw,
-    )
-    fig.update_yaxes(
+
+    value_axis = dict(
         showline=True,
         linewidth=1,
         linecolor="#d0d0d0",
         mirror=False,
-        layer="below traces",
-        ticks="outside",
         showgrid=False,
         zeroline=True,
         zerolinecolor="#888888",
@@ -1401,6 +1896,20 @@ def _apply_bar_chart_theme(
         title_font=dict(size=11, color="#333"),
         **axis_kw,
     )
+    category_axis = dict(
+        showline=False,
+        mirror=False,
+        showgrid=False,
+        tickfont=dict(size=10, color="#444"),
+        **axis_kw,
+    )
+
+    if orientation == "h":
+        fig.update_xaxes(**value_axis)
+        fig.update_yaxes(**category_axis)
+    else:
+        fig.update_xaxes(**category_axis)
+        fig.update_yaxes(**value_axis)
 
 
 def _legend_bottom(y: float = -0.08) -> dict:
@@ -1421,14 +1930,14 @@ def _radar_figure_layout(
     if n_legend_items <= 6:
         return (
             layout.single_height,
-            dict(l=80, r=80, t=70, b=50),
-            _legend_bottom(y=-0.08),
+            dict(l=80, r=80, t=40, b=72),
+            _legend_bottom(y=-0.14),
         )
 
     legend_margin_px = min(300, 120 + n_legend_items * 5)
     legend_content_px = n_legend_items * 15
     height = max(layout.single_height, legend_content_px + 120)
-    margin = dict(l=80, r=legend_margin_px, t=70, b=40)
+    margin = dict(l=80, r=legend_margin_px, t=40, b=52)
     legend = dict(
         orientation="v",
         yanchor="middle",
@@ -1441,6 +1950,8 @@ def _radar_figure_layout(
     )
     return height, margin, legend
 
+
+# ── Figure builders ──────────────────────────────────────────────────────────
 
 def build_doughnut_figure(
     impacts: list[str],
@@ -1555,31 +2066,28 @@ def build_doughnut_figure(
     return fig
 
 
-def build_bar_figure(
+@dataclass
+class _BarNormContext:
+    full_labels: list[str]
+    display_labels: list[str]
+    use_normalized: bool
+    norm_note: str
+    value_axis_label: str
+
+
+def _bar_norm_context(
     impacts: list[str],
     fibers: list[str],
     data: pd.DataFrame,
     impact_col: str,
-    *,
-    norm_method: str = NORM_METHOD_MINMAX,
-    baseline: str = "",
-    layout: ChartLayout = LAYOUT,
-) -> go.Figure:
-    if not impacts or not fibers:
-        return _empty_figure(BAR_EMPTY_SELECTION_MSG)
-
+    norm_method: str,
+) -> tuple[_BarNormContext, Callable[[str, pd.Series], list[float | None]]]:
     full_labels, display_labels = _bar_axis_labels(fibers)
-    x_label_px = _bar_x_label_height_px(full_labels)
-    value_label_px = _bar_value_label_height_px()
-    bottom_margin = x_label_px
-    plot_px_per_row = max(300, layout.bar_row_px)
-    n = len(impacts)
     present_fibers = [f for f in fibers if f in data.columns]
     fiber_cols = [c for c in data.columns if c not in {impact_col, "Units"}]
     use_normalized = _normalization_supported(
         len(present_fibers),
         method=norm_method,
-        baseline=baseline or None,
     )
     norm_matrix: pd.DataFrame | None = None
     if use_normalized:
@@ -1588,8 +2096,6 @@ def build_bar_figure(
             matrix_fibers = _normalization_matrix_fibers(
                 present_fibers,
                 fiber_cols,
-                method=norm_method,
-                baseline=baseline,
             )
             raw_matrix = _radar_value_matrix(
                 data, impact_col, available, matrix_fibers
@@ -1598,11 +2104,10 @@ def build_bar_figure(
                 raw_matrix,
                 present_fibers,
                 method=norm_method,
-                baseline=baseline,
                 fiber_cols=fiber_cols,
             )
 
-    def _values_for_impact(impact: str, row: pd.Series) -> list[float | None]:
+    def values_for_impact(impact: str, row: pd.Series) -> list[float | None]:
         if norm_matrix is not None and impact in norm_matrix.index:
             return [
                 _json_safe_number(norm_matrix.at[impact, f])
@@ -1613,9 +2118,45 @@ def build_bar_figure(
         return [_json_safe_number(v) for v in _fiber_values(row, fibers)]
 
     norm_note = ""
-    norm_y_label = ""
+    value_axis_label = ""
     if use_normalized:
-        norm_note, norm_y_label = _norm_chart_labels(norm_method, baseline)
+        norm_note, value_axis_label = _norm_chart_labels(norm_method)
+
+    ctx = _BarNormContext(
+        full_labels=full_labels,
+        display_labels=display_labels,
+        use_normalized=use_normalized,
+        norm_note=norm_note,
+        value_axis_label=value_axis_label,
+    )
+    return ctx, values_for_impact
+
+
+def build_bar_figure(
+    impacts: list[str],
+    fibers: list[str],
+    data: pd.DataFrame,
+    impact_col: str,
+    *,
+    norm_method: str = NORM_METHOD_RAW,
+    layout: ChartLayout = LAYOUT,
+) -> go.Figure:
+    if not impacts or not fibers:
+        return _empty_figure(BAR_EMPTY_SELECTION_MSG)
+
+    bar_ctx, values_for_impact = _bar_norm_context(
+        impacts, fibers, data, impact_col, norm_method
+    )
+    full_labels = bar_ctx.full_labels
+    display_labels = bar_ctx.display_labels
+    use_normalized = bar_ctx.use_normalized
+    norm_note = bar_ctx.norm_note
+    norm_y_label = bar_ctx.value_axis_label
+    x_label_px = _bar_x_label_height_px(full_labels)
+    value_label_px = _bar_value_label_height_px()
+    bottom_margin = x_label_px
+    plot_px_per_row = max(300, layout.bar_row_px)
+    n = len(impacts)
 
     if n == 1:
         impact = impacts[0]
@@ -1623,7 +2164,7 @@ def build_bar_figure(
         if row is None:
             return _empty_figure("No data for this impact.")
 
-        values = _values_for_impact(impact, row)
+        values = values_for_impact(impact, row)
         fig = go.Figure(data=[_bar_trace(full_labels, values)])
         title = _impact_label(impact, row, include_units=True) + norm_note
         y_title = norm_y_label if use_normalized else BAR_Y_LABEL_RAW
@@ -1670,7 +2211,7 @@ def build_bar_figure(
             _add_subplot_message(fig, "No data for this impact.", row=r, col=c)
             continue
 
-        values = _values_for_impact(impact, row)
+        values = values_for_impact(impact, row)
         fig.add_trace(_bar_trace(full_labels, values), row=r, col=c)
         y_label = norm_y_label if use_normalized else BAR_Y_LABEL_RAW
         fig.update_yaxes(title_text=y_label, row=r, col=c)
@@ -1711,6 +2252,206 @@ def build_bar_figure(
     return fig
 
 
+def build_grouped_bar_figure(
+    impacts: list[str],
+    fibers: list[str],
+    data: pd.DataFrame,
+    impact_col: str,
+    *,
+    norm_method: str = NORM_METHOD_PER_IMPACT,
+    layout: ChartLayout = LAYOUT,
+    orientation: str = "v",
+) -> go.Figure:
+    """Grouped per-fiber bars (All Potential Impact Factors vertical/horizontal views)."""
+    horizontal = orientation == "h"
+    if not impacts or not fibers:
+        return _empty_figure(BAR_EMPTY_SELECTION_MSG)
+
+    bar_ctx, values_for_impact = _bar_norm_context(
+        impacts, fibers, data, impact_col, norm_method
+    )
+    full_labels = bar_ctx.full_labels
+    display_labels = bar_ctx.display_labels
+    use_normalized = bar_ctx.use_normalized
+    norm_note = bar_ctx.norm_note
+    norm_value_label = bar_ctx.value_axis_label
+    x_label_px = _bar_x_label_height_px(full_labels)
+    y_label_px = _bar_y_label_width_px(full_labels)
+    value_label_px = _bar_value_label_height_px()
+    bottom_margin = x_label_px
+    left_margin = y_label_px
+    plot_px_per_row = max(300, layout.bar_row_px)
+    n = len(impacts)
+
+    if n == 1:
+        impact = impacts[0]
+        row = _row_for_impact(data, impact_col, impact)
+        if row is None:
+            return _empty_figure("No data for this impact.")
+
+        values = values_for_impact(impact, row)
+        title = _impact_label(impact, row, include_units=True) + norm_note
+        value_title = norm_value_label if use_normalized else BAR_Y_LABEL_RAW
+
+        if horizontal:
+            fig = go.Figure(
+                data=[_bar_trace(full_labels, values, orientation="h")]
+            )
+            height = max(layout.single_height, len(full_labels) * 40 + 100)
+            margin = {
+                **layout.margin_single,
+                "l": left_margin,
+                "b": 50,
+                "r": 40,
+            }
+            fig.update_layout(
+                height=height,
+                autosize=True,
+                margin=margin,
+                xaxis_title=value_title,
+                bargap=0.35,
+                title=dict(text=title, x=0.5, xanchor="center", font=dict(size=12)),
+            )
+            _apply_bar_chart_theme(fig, orientation="h")
+            _apply_bar_y_axis_range(
+                fig,
+                values,
+                norm_method=norm_method if use_normalized else NORM_METHOD_RAW,
+                plot_px=plot_px_per_row,
+                value_label_px=value_label_px,
+                orientation="h",
+            )
+            _apply_bar_fiber_labels(
+                fig,
+                full_labels,
+                display_labels,
+                values,
+                orientation="h",
+            )
+            return fig
+
+        fig = go.Figure(data=[_bar_trace(full_labels, values)])
+        right_margin = _bar_title_right_margin([title])
+        margin = {**layout.margin_single, "b": bottom_margin, "r": right_margin}
+        fig.update_layout(
+            height=layout.single_height,
+            autosize=True,
+            margin=margin,
+            yaxis_title=value_title,
+            bargap=0.35,
+        )
+        _apply_bar_chart_theme(fig)
+        _apply_bar_y_axis_range(
+            fig,
+            values,
+            norm_method=norm_method if use_normalized else NORM_METHOD_RAW,
+            plot_px=plot_px_per_row,
+            value_label_px=value_label_px,
+        )
+        _apply_bar_fiber_labels(fig, full_labels, display_labels, values)
+        _apply_bar_right_title(fig, title)
+        return fig
+
+    impact_full = _bar_impact_full_labels(impacts, data, impact_col)
+    impact_display, label_margin = _grouped_bar_impact_label_layout(
+        impact_full,
+        orientation=orientation,
+        n_fibers=len(fibers),
+    )
+    if horizontal:
+        bottom_margin = 50
+        left_margin = label_margin
+    else:
+        bottom_margin = label_margin
+        left_margin = layout.margin_single.get("l", 30)
+    all_values: list[float | None] = []
+
+    fig = go.Figure()
+    for fiber_idx, fiber in enumerate(fibers):
+        fiber_name = str(fiber).strip()
+        y_vals: list[float | None] = []
+        for impact in impacts:
+            row = _row_for_impact(data, impact_col, impact)
+            if row is None:
+                y_vals.append(None)
+                continue
+            impact_values = values_for_impact(impact, row)
+            y_vals.append(
+                impact_values[fiber_idx] if fiber_idx < len(impact_values) else None
+            )
+        all_values.extend(y_vals)
+        fig.add_trace(
+            _grouped_bar_fiber_trace(
+                name=fiber_name,
+                x=impact_full,
+                y=y_vals,
+                color_idx=fiber_idx,
+                orientation=orientation,
+            )
+        )
+
+    value_title = norm_value_label if use_normalized else BAR_Y_LABEL_RAW
+    if horizontal:
+        row_px = max(
+            _grouped_bar_bundle_height_px(len(fibers)),
+            max(
+                (_wrapped_label_row_height_px(w) for w in impact_display),
+                default=44,
+            ),
+        )
+        height = max(layout.single_height, len(impact_full) * row_px + 120)
+        margin = {
+            **layout.margin_single,
+            "l": left_margin,
+            "b": bottom_margin,
+            "r": 30,
+            "t": 72,
+        }
+        fig.update_layout(
+            height=height,
+            autosize=True,
+            margin=margin,
+            xaxis_title=value_title,
+            barmode="group",
+            bargap=0.22,
+            bargroupgap=0.02,
+            legend=_bar_fiber_legend(),
+            showlegend=True,
+        )
+    else:
+        margin = {**layout.margin_single, "b": bottom_margin, "r": 30, "t": 72}
+        fig.update_layout(
+            height=layout.single_height,
+            autosize=True,
+            margin=margin,
+            yaxis_title=value_title,
+            barmode="group",
+            bargap=0.22,
+            bargroupgap=0.02,
+            legend=_bar_fiber_legend(),
+            showlegend=True,
+        )
+    _apply_bar_chart_theme(fig, orientation=orientation)
+    _apply_bar_y_axis_range(
+        fig,
+        all_values,
+        norm_method=norm_method if use_normalized else NORM_METHOD_RAW,
+        plot_px=plot_px_per_row,
+        value_label_px=value_label_px,
+        orientation=orientation,
+    )
+    _apply_grouped_bar_impact_labels(
+        fig,
+        impact_full,
+        impact_display,
+        orientation=orientation,
+    )
+    _apply_grouped_bar_bundle_separators(
+        fig, len(impact_full), orientation=orientation
+    )
+    return fig
+
+
 def _heatmap_row_color_scale(raw: pd.DataFrame, fibers: list[str]) -> pd.DataFrame:
     """Per-impact min–max to 0–1 for cell color when units differ across rows."""
     out = raw[fibers].copy()
@@ -1737,57 +2478,157 @@ def _truncate_display_label(text: str, max_len: int) -> str:
     return text[: max_len - 3] + "..."
 
 
+def _heatmap_cell_dims(n_rows: int, n_cols: int) -> tuple[int, int]:
+    """Pixel width/height per heatmap cell (narrow columns, taller rows)."""
+    col_px = 22 if n_cols > 18 else (26 if n_cols > 14 else (30 if n_cols > 10 else (34 if n_cols > 7 else 38)))
+    row_px = 44 if n_rows > 12 else (48 if n_rows > 8 else 52)
+    return col_px, row_px
+
+
+def _heatmap_impact_label_layout(
+    full_labels: list[str],
+    *,
+    row_px: int,
+) -> tuple[list[str], int]:
+    """Wrap impact names for the y-axis within each row height."""
+    if not full_labels:
+        return [], _GROUPED_BAR_IMPACT_LABEL_MIN_MARGIN
+
+    bundle_px = row_px
+    max_lines = max(1, bundle_px // _GROUPED_BAR_IMPACT_LABEL_LINE_PX)
+    margin_px = _GROUPED_BAR_IMPACT_LABEL_MIN_MARGIN
+    max_chars = max(12, int(margin_px / _GROUPED_BAR_IMPACT_LABEL_CHAR_PX))
+    wrapped: list[str] = []
+    for _ in range(3):
+        max_lines = max(
+            1,
+            min(max_lines, bundle_px // _GROUPED_BAR_IMPACT_LABEL_LINE_PX),
+        )
+        wrapped = [
+            _wrap_grouped_impact_label(
+                label,
+                max_chars_per_line=max_chars,
+                max_lines=max_lines,
+            )
+            for label in full_labels
+        ]
+        if any(_wrapped_label_row_height_px(w) > bundle_px for w in wrapped) and max_lines > 1:
+            max_lines -= 1
+            continue
+        margin_px = max(
+            _GROUPED_BAR_IMPACT_LABEL_MIN_MARGIN,
+            max(_wrapped_label_left_extent_px(w) for w in wrapped) + 28,
+        )
+        max_chars = max(12, int(margin_px / _GROUPED_BAR_IMPACT_LABEL_CHAR_PX))
+    return wrapped, margin_px
+
+
+def _heatmap_fiber_label_layout(
+    full_labels: list[str],
+    *,
+    col_px: int,
+) -> tuple[list[str], int]:
+    """Wrap fiber names for vertical x-axis labels within each column width."""
+    if not full_labels:
+        return [], 96
+
+    bundle_px = col_px
+    max_lines = max(1, bundle_px // _GROUPED_BAR_IMPACT_LABEL_LINE_PX)
+    margin_px = 96
+    max_chars = max(8, int(margin_px / _GROUPED_BAR_IMPACT_LABEL_CHAR_PX))
+    wrapped: list[str] = []
+    for _ in range(3):
+        max_lines = max(
+            1,
+            min(max_lines, bundle_px // _GROUPED_BAR_IMPACT_LABEL_LINE_PX),
+        )
+        wrapped = [
+            _wrap_grouped_impact_label(
+                label,
+                max_chars_per_line=max_chars,
+                max_lines=max_lines,
+            )
+            for label in full_labels
+        ]
+        if any(
+            _wrapped_label_horizontal_extent_px(w) > bundle_px for w in wrapped
+        ) and max_lines > 1:
+            max_lines -= 1
+            continue
+        margin_px = max(
+            96,
+            max(_wrapped_label_vertical_extent_px(w) for w in wrapped) + 28,
+        )
+        max_chars = max(8, int(margin_px / _GROUPED_BAR_IMPACT_LABEL_CHAR_PX))
+    return wrapped, margin_px
+
+
 def _heatmap_axis_labels(
     data: pd.DataFrame,
     impact_col: str,
     impacts: list[str],
     fibers: list[str],
 ) -> tuple[list[str], list[str], list[str], list[str]]:
-    """Full labels for hover; truncated labels for axis ticks."""
-    y_full: list[str] = []
-    for impact in impacts:
-        row = _row_for_impact(data, impact_col, impact)
-        if row is None:
-            y_full.append(str(impact))
-        else:
-            y_full.append(_impact_label(impact, row, include_units=False))
-
-    x_full = list(fibers)
-    y_max_len = 24 if len(y_full) <= 6 else 22
-    x_max_len = 16 if len(x_full) > 12 else (20 if len(x_full) > 8 else 26)
-    y_display = [_truncate_display_label(label, y_max_len) for label in y_full]
-    x_display = [_truncate_display_label(label, x_max_len) for label in x_full]
+    """Full labels for hover; wrapped labels for axis display."""
+    y_full = _bar_impact_full_labels(impacts, data, impact_col)
+    x_full = [str(f).strip() for f in fibers]
+    col_px, row_px = _heatmap_cell_dims(len(y_full), len(x_full))
+    y_display, _ = _heatmap_impact_label_layout(y_full, row_px=row_px)
+    x_display, _ = _heatmap_fiber_label_layout(x_full, col_px=col_px)
     return y_full, y_display, x_full, x_display
 
 
 def _heatmap_layout_dims(
     n_rows: int,
     n_cols: int,
-    y_labels: list[str],
-    x_labels: list[str],
+    y_full: list[str],
+    x_full: list[str],
     *,
     layout: ChartLayout,
 ) -> dict[str, object]:
-    # Narrow columns, taller rows: vertical cell shape (compact width).
-    col_px = 22 if n_cols > 18 else (26 if n_cols > 14 else (30 if n_cols > 10 else (34 if n_cols > 7 else 38)))
-    row_px = 44 if n_rows > 12 else (48 if n_rows > 8 else 52)
-    height = max(420, row_px * n_rows + 72)
-    max_y = max((len(label) for label in y_labels), default=16)
-    left = min(280, max(64, int(max_y * 5.8)))
-    max_x = max((len(label) for label in x_labels), default=10)
-    bottom = min(280, max(96, int(max_x * 7.5)))
-    dense = n_cols > 12 or n_rows * n_cols > 48
+    col_px, row_px = _heatmap_cell_dims(n_rows, n_cols)
+    _, left = _heatmap_impact_label_layout(y_full, row_px=row_px)
+    _, bottom = _heatmap_fiber_label_layout(x_full, col_px=col_px)
+    top = 28
     heatmap_body_px = row_px * n_rows
+    # Plot area height matches the heatmap grid; margins sit outside it.
+    height = max(420, top + bottom + heatmap_body_px)
+    plot_h = height - top - bottom
+    dense = n_cols > 12 or n_rows * n_cols > 48
     return {
         "width": max(560, col_px * n_cols + 140 + 88),
         "height": height,
-        "margin": dict(l=left, r=96, t=28, b=bottom),
-        "tickangle": -90,
+        "margin": dict(l=left, r=96, t=top, b=bottom),
         "tickfont_size": 8 if n_cols > 14 else (9 if n_cols > 10 else 10),
-        "y_tickfont_size": 9 if n_rows > 12 else 10,
+        "y_tickfont_size": _GROUPED_BAR_IMPACT_LABEL_FONT_SIZE,
         "dense": dense,
-        "colorbar_len_px": max(120, int(heatmap_body_px * 0.88)),
+        "plot_h_px": plot_h,
+        "n_rows": n_rows,
     }
+
+
+def _apply_heatmap_fiber_labels(
+    fig: go.Figure,
+    full_labels: list[str],
+    display_labels: list[str],
+) -> None:
+    """Multi-line vertical fiber labels below each heatmap column."""
+    fig.update_xaxes(showticklabels=False)
+    for label, disp in zip(full_labels, display_labels):
+        fig.add_annotation(
+            x=label,
+            y=-0.02,
+            yref="y domain",
+            text=disp,
+            textangle=-90,
+            xanchor="center",
+            yanchor="top",
+            showarrow=False,
+            font=dict(
+                size=_GROUPED_BAR_IMPACT_LABEL_FONT_SIZE,
+                color="#333333",
+            ),
+        )
 
 
 def _heatmap_missing_cell_shapes(
@@ -1830,13 +2671,13 @@ def _heatmap_missing_cell_shapes(
     return shapes
 
 
-def _heatmap_colorbar(*, len_px: int) -> dict:
-    """Vertical scale beside the heatmap grid."""
+def _heatmap_colorbar() -> dict:
+    """Vertical scale beside the heatmap grid (full plot height)."""
     return dict(
         orientation="v",
         thickness=22,
-        len=len_px,
-        lenmode="pixels",
+        len=1.0,
+        lenmode="fraction",
         y=0.5,
         yanchor="middle",
         x=1.02,
@@ -1908,8 +2749,8 @@ def build_heatmap_figure(
     dims = _heatmap_layout_dims(
         len(y_full),
         len(present_fibers),
-        y_display,
-        x_display,
+        y_full,
+        x_full,
         layout=layout,
     )
 
@@ -1920,7 +2761,8 @@ def build_heatmap_figure(
         zmin=0.0,
         zmax=1.0,
         colorscale=HEATMAP_DATA_COLORSCALE,
-        showscale=False,
+        showscale=True,
+        colorbar=_heatmap_colorbar(),
         hoverongaps=True,
         customdata=hover_data,
         hovertemplate=(
@@ -1932,29 +2774,8 @@ def build_heatmap_figure(
         ygap=1,
     )
 
-    colorbar_len = int(dims["colorbar_len_px"])
-    fig = go.Figure(
-        data=[
-            go.Heatmap(**heatmap_kw),
-            go.Scatter(
-                x=[None, None],
-                y=[None, None],
-                mode="markers",
-                marker=dict(
-                    size=0.01,
-                    opacity=0,
-                    color=[0.0, 1.0],
-                    colorscale=HEATMAP_DATA_COLORSCALE,
-                    cmin=0.0,
-                    cmax=1.0,
-                    colorbar=_heatmap_colorbar(len_px=colorbar_len),
-                    showscale=True,
-                ),
-                hoverinfo="skip",
-                showlegend=False,
-            ),
-        ]
-    )
+    n_rows = int(dims["n_rows"])
+    fig = go.Figure(data=[go.Heatmap(**heatmap_kw)])
     fig.update_layout(
         width=dims["width"],
         height=dims["height"],
@@ -1966,22 +2787,21 @@ def build_heatmap_figure(
         xaxis=dict(
             tickmode="array",
             tickvals=x_full,
-            ticktext=x_display,
-            tickangle=dims["tickangle"],
-            tickfont=dict(size=dims["tickfont_size"]),
+            ticktext=[""] * len(x_full),
             side="bottom",
-            ticklabeloverflow="allow",
             automargin=True,
         ),
         yaxis=dict(
             tickmode="array",
             tickvals=y_full,
             ticktext=y_display,
+            range=[-0.5, n_rows - 0.5],
             autorange="reversed",
-            tickfont=dict(size=dims["y_tickfont_size"]),
+            tickfont=dict(size=dims["y_tickfont_size"], color="#444"),
         ),
         meta=dict(responsive=not dims["dense"]),
     )
+    _apply_heatmap_fiber_labels(fig, x_full, x_display)
     return fig
 
 
@@ -2004,29 +2824,14 @@ def _radar_value_matrix(
     ).astype(float)
 
 
-def _fibers_for_normalization(
-    display_fibers: list[str],
-    baseline: str,
-    fiber_cols: list[str],
-) -> list[str]:
-    """Include baseline in the value matrix even when it is not shown on the chart."""
-    fibers = list(display_fibers)
-    if baseline and baseline in fiber_cols and baseline not in fibers:
-        fibers.insert(0, baseline)
-    return fibers
-
-
 def _normalization_matrix_fibers(
     present_fibers: list[str],
     fiber_cols: list[str],
-    *,
-    method: str,
-    baseline: str,
 ) -> list[str]:
-    """Columns to load for normalization; range norm with one fiber uses full catalog."""
-    if method in (NORM_METHOD_MINMAX, NORM_METHOD_ABS_MAX) and len(present_fibers) < 2:
+    """Columns to load for normalization; one fiber uses full catalog for scaling."""
+    if len(present_fibers) < 2:
         return list(fiber_cols)
-    return _fibers_for_normalization(present_fibers, baseline, fiber_cols)
+    return list(present_fibers)
 
 
 def _normalize_category_across_fibers_abs_max(
@@ -2057,41 +2862,12 @@ def _normalize_category_across_fibers_abs_max(
     return out
 
 
-def _normalize_category_across_fibers_percent(
-    raw: pd.DataFrame,
-    fibers: list[str],
-    *,
-    scale_fibers: list[str] | None = None,
-) -> pd.DataFrame:
-    """Per impact: (value − min) / (max − min) × 100 using scale_fibers for min/max."""
-    present = [f for f in fibers if f in raw.columns]
-    if not present:
-        return raw[present].copy()
-
-    scale = scale_fibers if scale_fibers is not None else present
-    scale = [f for f in scale if f in raw.columns]
-    if not scale:
-        scale = present
-
-    out = raw[present].copy()
-    for impact in out.index:
-        scale_row = raw.loc[impact, scale]
-        min_val = scale_row.min()
-        max_val = scale_row.max()
-        if pd.isna(min_val) or pd.isna(max_val) or max_val == min_val:
-            out.loc[impact, present] = 0.0
-        else:
-            values = raw.loc[impact, present]
-            out.loc[impact, present] = 100.0 * (values - min_val) / (max_val - min_val)
-    return out
-
-
 def _range_normalization_scale_fibers(
     display_fibers: list[str],
     fiber_cols: list[str],
     raw: pd.DataFrame,
 ) -> list[str]:
-    """Use selected fibers for min/max when 2+; otherwise scale against the full catalog."""
+    """Use selected fibers for scaling when 2+; otherwise scale against the full catalog."""
     present = [f for f in display_fibers if f in raw.columns]
     if len(present) >= 2:
         return present
@@ -2099,76 +2875,18 @@ def _range_normalization_scale_fibers(
     return catalog if catalog else present
 
 
-def _normalize_baseline_ratio(
-    raw: pd.DataFrame,
-    fibers: list[str],
-    baseline: str,
-) -> pd.DataFrame:
-    """Per impact category: original value / baseline fiber value in that row."""
-    present = [f for f in fibers if f in raw.columns]
-    if not present or baseline not in raw.columns:
-        return raw[present].copy() if present else raw.copy()
-
-    norm = raw[present].copy()
-    for impact in norm.index:
-        ref_val = raw.at[impact, baseline]
-        row = raw.loc[impact, present]
-        if pd.isna(ref_val) or ref_val == 0:
-            norm.loc[impact, present] = float("nan")
-        else:
-            norm.loc[impact, present] = row / ref_val
-    return norm
-
-
-def _normalize_asinh_baseline(
-    raw: pd.DataFrame,
-    fibers: list[str],
-    baseline: str,
-) -> pd.DataFrame:
-    """Per impact: asinh((fiber − baseline) / max|fiber − baseline|) across selected fibers."""
-    present = [f for f in fibers if f in raw.columns]
-    if not present or baseline not in raw.columns:
-        return raw[present].copy() if present else raw.copy()
-
-    norm = raw[present].copy()
-    for impact in norm.index:
-        ref_val = raw.at[impact, baseline]
-        if pd.isna(ref_val):
-            norm.loc[impact, present] = float("nan")
-            continue
-        scale_cols = list(dict.fromkeys([baseline, *present]))
-        scale_row = raw.loc[impact, [c for c in scale_cols if c in raw.columns]]
-        max_abs_diff = float((scale_row - ref_val).abs().max())
-        if max_abs_diff == 0 or pd.isna(max_abs_diff):
-            norm.loc[impact, present] = 0.0
-            continue
-        for fiber in present:
-            scaled = (raw.at[impact, fiber] - ref_val) / max_abs_diff
-            norm.at[impact, fiber] = float(np.arcsinh(scaled))
-    return norm
-
-
 def _normalize_fiber_matrix(
     raw: pd.DataFrame,
     fibers: list[str],
     *,
     method: str,
-    baseline: str,
     fiber_cols: list[str] | None = None,
 ) -> pd.DataFrame:
     if method == NORM_METHOD_RAW:
         return raw.copy()
-    if method == NORM_METHOD_BASELINE:
-        return _normalize_baseline_ratio(raw, fibers, baseline)
-    if method == NORM_METHOD_ASINH:
-        return _normalize_asinh_baseline(raw, fibers, baseline)
     catalog = fiber_cols if fiber_cols is not None else list(raw.columns)
     scale_fibers = _range_normalization_scale_fibers(fibers, catalog, raw)
-    if method == NORM_METHOD_ABS_MAX:
-        return _normalize_category_across_fibers_abs_max(
-            raw, fibers, scale_fibers=scale_fibers
-        )
-    return _normalize_category_across_fibers_percent(
+    return _normalize_category_across_fibers_abs_max(
         raw, fibers, scale_fibers=scale_fibers
     )
 
@@ -2177,41 +2895,38 @@ def _coerce_norm_method(selected: list[str]) -> str:
     for method in selected:
         if method in NORM_METHOD_CHOICES:
             return method
-    return NORM_METHOD_MINMAX
+    return NORM_METHOD_ABS_MAX
 
 
 def _norm_table_decimals(method: str) -> int:
     return DISPLAY_DECIMALS
 
 
-def _norm_chart_labels(method: str, baseline: str) -> tuple[str, str]:
-    """Return (title_suffix, y_axis_label) for bar charts."""
+def _norm_chart_labels(method: str) -> tuple[str, str]:
+    """Return (title_suffix, value_axis_label) for bar charts."""
     if method == NORM_METHOD_RAW:
-        return (" (raw values)", BAR_Y_LABEL_RAW)
-    if method == NORM_METHOD_ASINH:
-        ref = f"; ref. {baseline}" if baseline else ""
-        return (f" (asinh baseline scaling{ref})", BAR_Y_LABEL_NORMALIZED)
-    if method == NORM_METHOD_BASELINE:
-        ref = f"; ref. {baseline}" if baseline else ""
-        return (f" (baseline-normalized{ref})", BAR_Y_LABEL_NORMALIZED)
-    if method == NORM_METHOD_ABS_MAX:
-        return (" (max-abs normalized −1–1)", BAR_Y_LABEL_NORMALIZED)
-    return (" (range-normalized 0–100%)", BAR_Y_LABEL_NORMALIZED)
+        return ("", BAR_Y_LABEL_RAW)
+    return ("", BAR_Y_LABEL_NORMALIZED)
 
 
-def _normalization_error_message(
-    fibers: list[str],
-    *,
-    method: str,
-    baseline: str | None,
-) -> str | None:
-    if method == NORM_METHOD_RAW:
-        return None
-    if _norm_method_requires_baseline(method):
-        if not baseline:
-            return "Choose a baseline fiber under Reference Fiber for Normalization."
-        return None
-    return None
+def _radar_chart_title_text(norm_method: str) -> str:
+    if norm_method == NORM_METHOD_RAW:
+        return "Environmental profile"
+    return "Per-impact normalized environmental profile"
+
+
+def _radar_bottom_title_annotation(title_text: str) -> dict:
+    return dict(
+        text=title_text,
+        xref="paper",
+        yref="paper",
+        x=0.5,
+        y=0.04,
+        xanchor="center",
+        yanchor="top",
+        showarrow=False,
+        font=dict(size=13, color="#333"),
+    )
 
 
 def _build_normalized_data_table(
@@ -2221,7 +2936,6 @@ def _build_normalized_data_table(
     fibers: list[str],
     *,
     method: str,
-    baseline: str,
     fiber_cols: list[str] | None = None,
 ) -> pd.DataFrame:
     catalog_fibers = fiber_cols if fiber_cols is not None else [
@@ -2241,21 +2955,15 @@ def _build_normalized_data_table(
     order_key = {name: idx for idx, name in enumerate(available)}
     table["_sort"] = table[impact_col].astype(str).map(order_key)
     table = table.sort_values("_sort").drop(columns="_sort").reset_index(drop=True)
-    source_fibers = _fibers_for_normalization(
-        present_fibers, baseline, catalog_fibers
-    )
     matrix_fibers = _normalization_matrix_fibers(
         present_fibers,
         catalog_fibers,
-        method=method,
-        baseline=baseline,
     )
     raw_matrix = _radar_value_matrix(data, impact_col, available, matrix_fibers)
     norm_values = _normalize_fiber_matrix(
         raw_matrix,
         present_fibers,
         method=method,
-        baseline=baseline,
         fiber_cols=catalog_fibers,
     )
 
@@ -2308,8 +3016,7 @@ def build_radar_figure(
     data: pd.DataFrame,
     impact_col: str,
     *,
-    norm_method: str = NORM_METHOD_MINMAX,
-    baseline: str = "",
+    norm_method: str = NORM_METHOD_RAW,
     layout: ChartLayout = LAYOUT,
 ) -> go.Figure:
     if not impacts or not fibers:
@@ -2332,20 +3039,15 @@ def build_radar_figure(
         return _empty_figure("No fiber values found for the current selection.")
 
     fiber_cols = [c for c in data.columns if c not in {impact_col, "Units"}]
-    source_fibers = _fibers_for_normalization(
-        present_fibers, baseline, fiber_cols
-    )
-    raw = _radar_value_matrix(data, impact_col, available, source_fibers)
+    matrix_fibers = _normalization_matrix_fibers(present_fibers, fiber_cols)
+    raw = _radar_value_matrix(data, impact_col, available, matrix_fibers)
     raw_display = raw[present_fibers] if present_fibers else raw
     theta_labels = [_short_theta_label(i) for i in available]
     single_fiber = len(present_fibers) == 1
-    norm_err = _normalization_error_message(
-        present_fibers, method=norm_method, baseline=baseline or None
-    )
 
-    if norm_method == NORM_METHOD_RAW or norm_err:
+    if norm_method == NORM_METHOD_RAW:
         plot_values = raw_display
-        title_text = "Environmental profile (raw values per impact category)"
+        title_text = _radar_chart_title_text(norm_method)
         radialaxis = dict(
             visible=True,
             range=_polar_axis_range(
@@ -2355,115 +3057,20 @@ def build_radar_figure(
             gridcolor="#e0e0e0",
             linecolor="#cccccc",
         )
-    elif norm_method == NORM_METHOD_BASELINE and baseline:
-        plot_values = _normalize_baseline_ratio(raw, present_fibers, baseline)
-        title_text = (
-            f"Baseline-normalized profile (reference: {baseline}; "
-            "1.00 = same impact as baseline per category)"
-        )
-        arr = plot_values.to_numpy(dtype=float)
-        max_r = float(np.nanmax(arr)) if arr.size else 1.0
-        if not np.isfinite(max_r):
-            max_r = 1.0
-        upper = max(1.05, max_r * 1.1)
-        radialaxis = dict(
-            visible=True,
-            range=[0, upper],
-            tickformat=RADAR_RADIAL_TICK_FMT,
-            gridcolor="#e0e0e0",
-            linecolor="#cccccc",
-        )
-    elif norm_method == NORM_METHOD_ASINH and baseline:
-        plot_values = _normalize_asinh_baseline(raw, present_fibers, baseline)
-        title_text = (
-            f"Asinh baseline-scaled profile (reference: {baseline}; "
-            "0 = baseline per impact category)"
-        )
-        radialaxis = dict(
-            visible=True,
-            range=_polar_axis_range(plot_values.stack()),
-            tickformat=RADAR_RADIAL_TICK_FMT,
-            gridcolor="#e0e0e0",
-            linecolor="#cccccc",
-        )
-    elif norm_method == NORM_METHOD_ABS_MAX:
-        norm_raw = raw
-        if len(present_fibers) < 2:
-            norm_raw = _radar_value_matrix(
-                data,
-                impact_col,
-                available,
-                _normalization_matrix_fibers(
-                    present_fibers,
-                    fiber_cols,
-                    method=NORM_METHOD_ABS_MAX,
-                    baseline=baseline,
-                ),
-            )
+    else:
         plot_values = _normalize_fiber_matrix(
-            norm_raw,
+            raw,
             present_fibers,
             method=NORM_METHOD_ABS_MAX,
-            baseline=baseline,
             fiber_cols=fiber_cols,
         )
-        title_text = (
-            "Max-abs normalized environmental profile "
-            "(−1 to 1 per impact category"
-            + (
-                "; scaled vs all fibers when one fiber is selected"
-                if single_fiber
-                else " across selected fibers"
-            )
-            + ")"
-        )
+        title_text = _radar_chart_title_text(norm_method)
         radialaxis = dict(
             visible=True,
             range=[-1.0, 1.0],
             tickmode="array",
             tickvals=RADAR_ABS_MAX_TICKVALS,
             ticktext=RADAR_ABS_MAX_TICKTEXT,
-            gridcolor="#e0e0e0",
-            linecolor="#cccccc",
-        )
-    else:
-        norm_raw = raw
-        if len(present_fibers) < 2:
-            norm_raw = _radar_value_matrix(
-                data,
-                impact_col,
-                available,
-                _normalization_matrix_fibers(
-                    present_fibers,
-                    fiber_cols,
-                    method=NORM_METHOD_MINMAX,
-                    baseline=baseline,
-                ),
-            )
-        plot_values = _normalize_fiber_matrix(
-            norm_raw,
-            present_fibers,
-            method=NORM_METHOD_MINMAX,
-            baseline=baseline,
-            fiber_cols=fiber_cols,
-        )
-        title_text = (
-            "Range-normalized environmental profile "
-            "(0–100% per impact category"
-            + (
-                "; scaled vs all fibers when one fiber is selected"
-                if single_fiber
-                else " across selected fibers"
-            )
-            + ")"
-        )
-        radialaxis = dict(
-            visible=True,
-            range=[0, 100],
-            tick0=0,
-            dtick=25,
-            tickformat=RADAR_RADIAL_TICK_FMT,
-            ticksuffix="%",
             gridcolor="#e0e0e0",
             linecolor="#cccccc",
         )
@@ -2483,33 +3090,12 @@ def build_radar_figure(
                 f"{fiber}<br>"
                 f"Value: %{{r:{DISPLAY_NUMBER_FMT}}}<extra></extra>"
             )
-        elif norm_method == NORM_METHOD_BASELINE and baseline:
-            hovertemplate = (
-                "<b>%{theta}</b><br>"
-                f"{fiber}<br>"
-                f"Raw: %{{customdata:{DISPLAY_NUMBER_FMT}}}<br>"
-                f"Normalized: %{{r:{DISPLAY_NUMBER_FMT}}}<extra></extra>"
-            )
-        elif norm_method == NORM_METHOD_ASINH and baseline:
-            hovertemplate = (
-                "<b>%{theta}</b><br>"
-                f"{fiber}<br>"
-                f"Raw: %{{customdata:{DISPLAY_NUMBER_FMT}}}<br>"
-                f"Transformed: %{{r:{DISPLAY_NUMBER_FMT}}}<extra></extra>"
-            )
-        elif norm_method == NORM_METHOD_ABS_MAX:
-            hovertemplate = (
-                "<b>%{theta}</b><br>"
-                f"{fiber}<br>"
-                f"Raw: %{{customdata:{DISPLAY_NUMBER_FMT}}}<br>"
-                f"Normalized: %{{r:{DISPLAY_NUMBER_FMT}}}<extra></extra>"
-            )
         else:
             hovertemplate = (
                 "<b>%{theta}</b><br>"
                 f"{fiber}<br>"
                 f"Raw: %{{customdata:{DISPLAY_NUMBER_FMT}}}<br>"
-                f"Normalized: %{{r:{DISPLAY_NUMBER_FMT}}}%<extra></extra>"
+                f"Normalized: %{{r:{DISPLAY_NUMBER_FMT}}}<extra></extra>"
             )
         if len(trace_r) < 3:
             continue
@@ -2539,12 +3125,8 @@ def build_radar_figure(
         layout=layout,
     )
     fig.update_layout(
-        title=dict(
-            text=title_text,
-            x=0.5,
-            xanchor="center",
-            font=dict(size=14),
-        ),
+        title=None,
+        annotations=[_radar_bottom_title_annotation(title_text)],
         height=height,
         autosize=True,
         margin=margin,
@@ -2573,11 +3155,28 @@ def _build_chart_figure(
     data: pd.DataFrame,
     impact_col: str,
     *,
-    norm_method: str = NORM_METHOD_MINMAX,
-    baseline: str = "",
+    norm_method: str = NORM_METHOD_RAW,
 ) -> go.Figure:
     if chart_id == "heatmap":
         return build_heatmap_figure(impacts, fibers, data, impact_col)
+    if chart_id == "bar_vertical":
+        return build_grouped_bar_figure(
+            impacts,
+            fibers,
+            data,
+            impact_col,
+            norm_method=norm_method,
+            orientation="v",
+        )
+    if chart_id == "bar_horizontal":
+        return build_grouped_bar_figure(
+            impacts,
+            fibers,
+            data,
+            impact_col,
+            norm_method=norm_method,
+            orientation="h",
+        )
     if chart_id == "bar":
         return build_bar_figure(
             impacts,
@@ -2585,7 +3184,6 @@ def _build_chart_figure(
             data,
             impact_col,
             norm_method=norm_method,
-            baseline=baseline,
         )
     if chart_id == "radar":
         return build_radar_figure(
@@ -2594,7 +3192,6 @@ def _build_chart_figure(
             data,
             impact_col,
             norm_method=norm_method,
-            baseline=baseline,
         )
     return _empty_figure("Unknown chart type.")
 
@@ -2650,7 +3247,6 @@ def _build_chart_data_table(
     impact_col: str,
     *,
     norm_method: str,
-    baseline: str,
     fiber_cols: list[str] | None = None,
 ) -> pd.DataFrame:
     if not fibers or not impacts:
@@ -2666,21 +3262,108 @@ def _build_chart_data_table(
             fibers,
             fiber_cols=catalog_fibers,
         )
-    err = _normalization_error_message(
-        fibers, method=norm_method, baseline=baseline
-    )
-    if err:
-        return pd.DataFrame({"Message": [err]})
     return _sanitize_display_table(
         _build_normalized_data_table(
             data,
             impact_col,
             impacts,
             fibers,
-            method=norm_method,
-            baseline=baseline,
+            method=NORM_METHOD_ABS_MAX,
             fiber_cols=catalog_fibers,
         )
+    )
+
+
+def _chart_values_preview_panel_ui(
+    table: pd.DataFrame,
+    impact_col: str,
+    *,
+    normalized: bool,
+    fiber_count: int,
+    impact_count: int,
+    panel_title: str = "Values table",
+    error_message: str | None = None,
+) -> ui.Tag:
+    if error_message:
+        body = ui.div(
+            ui.tags.p(error_message, class_="lca-formula-lead mb-0 text-danger"),
+            class_="lca-formula-body",
+        )
+        return _hover_panel_ui(
+            trigger_label="Values table",
+            icon_svg=_TABLE_ICON_SVG,
+            title=panel_title,
+            body=body,
+        )
+
+    if impact_count < 1:
+        body = ui.div(
+            ui.tags.p(
+                "Select at least one environmental impact.",
+                class_="lca-formula-lead mb-0",
+            ),
+            class_="lca-formula-body",
+        )
+    elif normalized:
+        lead = (
+            f"Per-impact normalized values (−1 to 1) for {impact_count} "
+            f"impact(s) and {fiber_count} fiber(s). Each impact row is "
+            "scaled independently."
+        )
+        body = ui.div(
+            ui.tags.p(lead, class_="lca-formula-lead"),
+            _compact_values_table_ui(table, impact_col, value_format="ratio"),
+            class_="lca-formula-body",
+        )
+    else:
+        fiber_note = (
+            f"{fiber_count} fiber(s)"
+            if fiber_count != 1
+            else "single fiber selected"
+        )
+        body = ui.div(
+            ui.tags.p(
+                f"Raw values for {impact_count} impact(s) and {fiber_note}.",
+                class_="lca-formula-lead",
+            ),
+            _compact_values_table_ui(table, impact_col, value_format="raw"),
+            class_="lca-formula-body",
+        )
+
+    return _hover_panel_ui(
+        trigger_label="Values table",
+        icon_svg=_TABLE_ICON_SVG,
+        title=panel_title,
+        body=body,
+    )
+
+
+def _all_impacts_values_preview_tag(
+    data: LcaData,
+    impacts: list[str],
+    fibers: list[str],
+    *,
+    norm_method: str,
+) -> ui.Tag:
+    normalized = _normalization_supported(len(fibers), method=norm_method)
+    if normalized:
+        table = _build_normalized_data_table(
+            data.df,
+            data.impact_col,
+            impacts,
+            fibers,
+            method=NORM_METHOD_ABS_MAX,
+        )
+    else:
+        table = _build_raw_radar_preview_table(
+            data.df, data.impact_col, impacts, fibers
+        )
+    return _chart_values_preview_panel_ui(
+        table,
+        data.impact_col,
+        normalized=normalized,
+        fiber_count=len(fibers),
+        impact_count=len(impacts),
     )
 
 
@@ -2690,48 +3373,477 @@ def _radar_norm_preview_tag(
     fibers: list[str],
     *,
     norm_method: str,
-    baseline: str | None,
 ) -> ui.Tag:
-    normalized = _normalization_supported(
-        len(fibers),
-        method=norm_method,
-        baseline=baseline,
+    return _all_impacts_values_preview_tag(
+        data, impacts, fibers, norm_method=norm_method
     )
-    if normalized:
-        err = _normalization_error_message(
-            fibers, method=norm_method, baseline=baseline
-        )
-        if err:
-            return _radar_norm_preview_panel_ui(
-                pd.DataFrame(),
-                data.impact_col,
-                normalized=False,
-                fiber_count=len(fibers),
-                impact_count=len(impacts),
-                norm_method=norm_method,
-                baseline=baseline,
-                error_message=err,
-            )
-        table = _build_normalized_data_table(
-            data.df,
-            data.impact_col,
-            impacts,
-            fibers,
-            method=norm_method,
-            baseline=baseline or "",
-        )
-    else:
-        table = _build_raw_radar_preview_table(
-            data.df, data.impact_col, impacts, fibers
-        )
-    return _radar_norm_preview_panel_ui(
-        table,
-        data.impact_col,
-        normalized=normalized,
-        fiber_count=len(fibers),
-        impact_count=len(impacts),
-        norm_method=norm_method,
-        baseline=baseline,
+
+
+def _home_page_css() -> str:
+    return f"""
+.lca-home-page {{
+    padding: 1.25rem 1.5rem 1.75rem;
+}}
+.lca-home-lead {{
+    color: #495057;
+    font-size: 0.95rem;
+    max-width: 52rem;
+    margin-bottom: 1.25rem;
+}}
+.lca-home-layout {{
+    display: flex;
+    flex-direction: column;
+    gap: 1.15rem;
+}}
+.lca-home-top-row {{
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.85rem;
+    align-items: stretch;
+}}
+.lca-home-card.btn {{
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: flex-start;
+    width: 100%;
+    height: 100%;
+    text-align: left;
+    white-space: normal;
+    border: 1px solid #cfe2ff;
+    border-radius: 12px;
+    background: {_GRADIENT_HOME_CARD};
+    padding: 1.1rem 1.15rem;
+    box-shadow: 0 1px 3px rgba(13, 110, 253, 0.06);
+    transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}}
+.lca-home-top-card.btn {{
+    min-height: 11rem;
+    padding: 1rem 0.95rem;
+}}
+.lca-home-card.btn:hover,
+.lca-home-card.btn:focus {{
+    transform: translateY(-2px);
+    border-color: #9ec5fe;
+    box-shadow: 0 8px 18px rgba(13, 110, 253, 0.14);
+    background: {_GRADIENT_HOME_CARD_HOVER};
+    color: inherit;
+}}
+.lca-home-card-title {{
+    font-size: 1rem;
+    font-weight: 700;
+    color: #1a2b42;
+    margin: 0 0 0.45rem 0;
+}}
+.lca-home-card-desc {{
+    font-size: 0.84rem;
+    line-height: 1.45;
+    color: #495057;
+    margin: 0;
+}}
+.lca-home-top-card .lca-home-card-title {{
+    font-size: 0.95rem;
+    line-height: 1.3;
+}}
+.lca-home-top-card .lca-home-card-desc {{
+    font-size: 0.8rem;
+    line-height: 1.45;
+}}
+.lca-home-group {{
+    border: 1px solid #c5d9fc;
+    border-radius: 12px;
+    background: {_GRADIENT_HOME_GROUP};
+    padding: 1.1rem 1.15rem 1.15rem;
+    box-shadow: 0 1px 4px rgba(13, 110, 253, 0.07);
+}}
+.lca-home-group-title {{
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: #1a2b42;
+    margin: 0 0 0.35rem 0;
+}}
+.lca-home-group-desc {{
+    font-size: 0.84rem;
+    color: #495057;
+    margin: 0 0 0.85rem 0;
+}}
+.lca-home-subcards {{
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.85rem;
+    align-items: stretch;
+}}
+.lca-home-subcard.btn {{
+    min-height: 7.25rem;
+    background: {_GRADIENT_HOME_SUBCARD};
+}}
+.lca-home-subcard.btn:hover,
+.lca-home-subcard.btn:focus {{
+    background: {_GRADIENT_HOME_SUBCARD_HOVER};
+}}
+"""
+
+
+def _home_nav_card(
+    *,
+    button_id: str,
+    title: str,
+    description: str,
+    subcard: bool = False,
+    top_row: bool = False,
+) -> ui.Tag:
+    card_class = "lca-home-card"
+    if subcard:
+        card_class += " lca-home-subcard"
+    if top_row:
+        card_class += " lca-home-top-card"
+    return ui.input_action_button(
+        button_id,
+        ui.div(
+            ui.tags.h6(title, class_="lca-home-card-title"),
+            ui.tags.p(description, class_="lca-home-card-desc"),
+        ),
+        class_=card_class,
+    )
+
+
+def _home_nav_group(
+    *,
+    title: str,
+    description: str,
+    items: tuple[dict[str, str], ...] | list[dict[str, str]],
+) -> ui.Tag:
+    return ui.div(
+        ui.tags.h5(title, class_="lca-home-group-title"),
+        ui.tags.p(description, class_="lca-home-group-desc"),
+        ui.div(
+            *[
+                _home_nav_card(
+                    button_id=str(item["button_id"]),
+                    title=str(item["title"]),
+                    description=str(item["description"]),
+                    subcard=True,
+                )
+                for item in items
+            ],
+            class_="lca-home-subcards",
+        ),
+        class_="lca-home-group",
+    )
+
+
+def _home_page_ui() -> ui.Tag:
+    return ui.div(
+        ui.tags.p(
+            "Choose a view below to explore fiber comparisons. "
+            "Use the sidebar to pick fibers and impacts, then click Apply.",
+            class_="lca-home-lead",
+        ),
+        ui.div(
+            ui.div(
+                _home_nav_card(
+                    button_id="home_nav_comparison_table",
+                    title="Comparison Table",
+                    description="Side-by-side raw and normalized values for selected fibers and impacts.",
+                    top_row=True,
+                ),
+                _home_nav_card(
+                    button_id="home_nav_all_impacts",
+                    title="All Potential Impact Factors",
+                    description="Heatmap, radar, and bar charts across all selected impacts.",
+                    top_row=True,
+                ),
+                _home_nav_card(
+                    button_id="home_nav_method",
+                    title="Method",
+                    description="Documentation on data sources and analysis methods.",
+                    top_row=True,
+                ),
+                _home_nav_card(
+                    button_id="home_nav_team",
+                    title="Team & Contributions",
+                    description="Project team members and acknowledgements.",
+                    top_row=True,
+                ),
+                class_="lca-home-top-row",
+            ),
+            _home_nav_group(
+                title="Impact factor sections",
+                description="Bar charts focused on a related set of environmental impacts.",
+                items=HOME_SECTION_CARDS,
+            ),
+            class_="lca-home-layout",
+        ),
+        class_="lca-home-page",
+    )
+
+
+def _home_nav_panel() -> ui.Tag:
+    return ui.nav_panel(
+        "Home",
+        ui.card(
+            ui.card_header("Home"),
+            _home_page_ui(),
+            full_screen=True,
+        ),
+        value=TAB_HOME,
+    )
+
+
+def _method_nav_panel() -> ui.Tag:
+    return ui.nav_panel(
+        "Method",
+        ui.card(
+            ui.card_header("Method"),
+            ui.div(
+                ui.tags.p(
+                    "Info will be added soon.",
+                    class_="text-muted px-3 py-3 mb-0",
+                ),
+            ),
+            full_screen=True,
+        ),
+        value=TAB_METHOD,
+    )
+
+
+def _team_page_css() -> str:
+    return """
+.lca-team-page {
+    padding: 1.25rem 1.5rem 1.5rem;
+}
+.lca-team-orgs-row {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 1rem;
+    align-items: start;
+}
+.lca-team-org-column {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.85rem;
+    min-width: 0;
+}
+.lca-team-logo-link {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    min-height: 5.5rem;
+    padding: 0.65rem 0.5rem;
+    border: none;
+    border-radius: 10px;
+    background: transparent;
+    box-shadow: none;
+    cursor: pointer;
+    text-decoration: none;
+    color: inherit;
+    position: relative;
+    z-index: 2;
+    pointer-events: auto;
+    transition: opacity 0.15s ease, transform 0.15s ease;
+}
+.lca-team-logo-link:hover,
+.lca-team-logo-link:focus {
+    opacity: 0.82;
+    transform: translateY(-1px);
+    outline: none;
+    text-decoration: none;
+    color: inherit;
+}
+.lca-team-logo-link:active {
+    transform: translateY(0);
+    opacity: 0.72;
+}
+.lca-team-logo-img {
+    display: block;
+    max-width: 100%;
+    max-height: 4.5rem;
+    width: auto;
+    height: auto;
+    object-fit: contain;
+}
+.lca-team-members {
+    display: flex;
+    flex-direction: column;
+    gap: 0.65rem;
+}
+.lca-team-member-card {
+    border: 1px solid #cfe2ff;
+    border-radius: 10px;
+    background: #f8fbff;
+    padding: 0.75rem 0.8rem;
+}
+.lca-team-member-name {
+    font-size: 0.92rem;
+    font-weight: 700;
+    color: #1a2b42;
+    margin: 0 0 0.2rem 0;
+    line-height: 1.3;
+}
+.lca-team-member-role {
+    font-size: 0.8rem;
+    color: #495057;
+    margin: 0 0 0.45rem 0;
+    line-height: 1.35;
+}
+.lca-team-contrib-label {
+    display: block;
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    color: #6c757d;
+    margin-bottom: 0.2rem;
+}
+.lca-team-contrib-list {
+    margin: 0;
+    padding-left: 1.1rem;
+    font-size: 0.8rem;
+    color: #343a40;
+    line-height: 1.4;
+}
+.lca-team-contrib-text {
+    font-size: 0.8rem;
+    color: #343a40;
+    margin: 0;
+    line-height: 1.4;
+}
+.lca-team-tba-card {
+    border: 1px dashed #c5d9fc;
+    border-radius: 10px;
+    background: #fbfdff;
+    color: #6c757d;
+    font-size: 0.85rem;
+    font-weight: 600;
+    text-align: center;
+    padding: 1.1rem 0.75rem;
+}
+.lca-team-ack-section {
+    margin-top: 1.5rem;
+    padding-top: 1rem;
+    border-top: 1px solid #dee2e6;
+}
+.lca-team-ack {
+    font-size: 0.82rem;
+    color: #6c757d;
+    line-height: 1.5;
+    margin: 0;
+    max-width: 52rem;
+}
+@media (max-width: 1100px) {
+    .lca-team-orgs-row {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+@media (max-width: 640px) {
+    .lca-team-orgs-row {
+        grid-template-columns: 1fr;
+    }
+}
+"""
+
+
+def _logo_data_uri(filename: str) -> str:
+    path = APP_ROOT / filename
+    mime_by_ext = {
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".webp": "image/webp",
+    }
+    mime = mime_by_ext.get(path.suffix.lower(), "application/octet-stream")
+    encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+    return f"data:{mime};base64,{encoded}"
+
+
+def _team_member_contributions_ui(contributions: list[str]) -> ui.Tag:
+    if len(contributions) == 1:
+        return ui.tags.p(contributions[0], class_="lca-team-contrib-text")
+    return ui.tags.ul(
+        *[ui.tags.li(item) for item in contributions],
+        class_="lca-team-contrib-list",
+    )
+
+
+def _team_member_card_ui(member: _TEAM_MEMBER) -> ui.Tag:
+    contributions = member["contributions"]
+    contrib_list = (
+        contributions
+        if isinstance(contributions, list)
+        else [str(contributions)]
+    )
+    return ui.tags.div(
+        ui.tags.h6(str(member["name"]), class_="lca-team-member-name"),
+        ui.tags.p(str(member["role"]), class_="lca-team-member-role"),
+        ui.tags.div(
+            ui.tags.span("Contributions", class_="lca-team-contrib-label"),
+            _team_member_contributions_ui(contrib_list),
+        ),
+        class_="lca-team-member-card",
+    )
+
+
+def _team_org_members_ui(members: list[_TEAM_MEMBER] | None) -> ui.Tag:
+    if not members:
+        return ui.tags.div("TBA", class_="lca-team-tba-card")
+    return ui.div(
+        *[_team_member_card_ui(member) for member in members],
+        class_="lca-team-members",
+    )
+
+
+def _team_org_column_ui(org: _TEAM_ORG) -> ui.Tag:
+    members = org["members"]
+    member_list = members if isinstance(members, list) else None
+    return ui.tags.div(
+        ui.tags.a(
+            ui.tags.img(
+                src=_logo_data_uri(str(org["logo"])),
+                alt=str(org["name"]),
+                class_="lca-team-logo-img",
+            ),
+            href=str(org["website"]),
+            target="_blank",
+            rel="noopener noreferrer",
+            class_="lca-team-logo-link",
+            title=str(org["name"]),
+            **{"aria-label": f"Visit {org['name']} website (opens in new tab)"},
+        ),
+        _team_org_members_ui(member_list),
+        class_="lca-team-org-column",
+    )
+
+
+def _team_page_ui() -> ui.Tag:
+    return ui.div(
+        ui.div(
+            *[_team_org_column_ui(org) for org in TEAM_ORGANIZATIONS],
+            class_="lca-team-orgs-row",
+        ),
+        ui.div(
+            ui.tags.p(
+                "This project was supported through collaboration with the "
+                "NC State University, Textile Innovation Engine, Walmart "
+                "Foundation, and the National Recycling Laboratory.",
+                class_="lca-team-ack",
+            ),
+            class_="lca-team-ack-section",
+        ),
+        class_="lca-team-page",
+    )
+
+
+def _team_nav_panel() -> ui.Tag:
+    return ui.nav_panel(
+        "Team & Contributions",
+        ui.card(
+            ui.card_header("Team & Contributions"),
+            _team_page_ui(),
+            class_="lca-team-card",
+        ),
+        value=TAB_TEAM,
     )
 
 
@@ -2766,6 +3878,19 @@ def _picker_summary_label(
     if len(selected) == 1:
         return selected[0]
     return f"{len(selected)} of {len(choices)} selected"
+
+
+def _render_picker_summary(
+    selected: list[str],
+    choices: list[str],
+    *,
+    placeholder: str,
+) -> ui.Tag:
+    text = _picker_summary_label(selected, choices, placeholder=placeholder)
+    cls = "lca-picker-summary-text"
+    if not selected:
+        cls += " lca-picker-summary-placeholder"
+    return ui.tags.span(text, class_=cls)
 
 
 def _checkbox_dropdown_panel(
@@ -2848,7 +3973,7 @@ def _select_card_panel(
     return ui.card(header, body, class_="lca-checkbox-card")
 
 
-_CHECKBOX_PANEL_CSS = """
+_CHECKBOX_PANEL_CSS = ("""
 .lca-checkbox-card {
     margin-bottom: 0.5rem !important;
 }
@@ -2950,13 +4075,15 @@ _CHECKBOX_PANEL_CSS = """
     align-items: center;
     gap: 0.5rem;
     padding: 0.4rem 0.85rem;
-    background: linear-gradient(180deg, #f8f9fb 0%, #f1f3f6 100%);
-    border-bottom: 1px solid #e2e6ea;
+    background: """
+    + _GRADIENT_SIDEBAR_HEADER
+    + """;
+    border-bottom: 1px solid #dbeafe;
 }
 .lca-checkbox-panel-title {
     font-size: 0.95rem;
     font-weight: 600;
-    color: #212529;
+    color: #0a58ca;
 }
 .lca-all-switch-wrap {
     display: inline-flex;
@@ -3155,15 +4282,28 @@ _CHECKBOX_PANEL_CSS = """
     max-width: min(92vw, 540px);
 }
 .lca-norm-table-wrap {
-    max-height: 300px;
+    max-width: 100%;
+    max-height: min(52vh, 380px);
     overflow: auto;
     border-radius: 8px;
     border: 1px solid #dbe4f0;
     background: #fff;
+    scrollbar-gutter: stable;
+    scrollbar-width: thin;
+}
+.lca-norm-table-wrap::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+.lca-norm-table-wrap::-webkit-scrollbar-thumb {
+    background: #b6c2d1;
+    border-radius: 4px;
 }
 .lca-norm-table {
     font-size: 0.78rem;
     margin-bottom: 0;
+    width: max-content;
+    min-width: 100%;
 }
 .lca-norm-table thead th {
     position: sticky;
@@ -3227,7 +4367,9 @@ _CHECKBOX_PANEL_CSS = """
     top: 100%;
     padding-top: 4px;
     z-index: 1060;
-    min-width: min(92vw, 540px);
+    min-width: min(92vw, 340px);
+    max-width: min(92vw, 720px);
+    width: min(92vw, 720px);
 }
 .lca-hover-panel:hover .lca-hover-panel-dropdown {
     display: block;
@@ -3237,6 +4379,9 @@ _CHECKBOX_PANEL_CSS = """
     box-shadow: 0 12px 32px rgba(15, 23, 42, 0.18);
     overflow: hidden;
     background: #fafbff;
+    max-height: min(75vh, 560px);
+    display: flex;
+    flex-direction: column;
 }
 .lca-hover-panel-title {
     background: linear-gradient(135deg, #0d6efd 0%, #0a58ca 100%);
@@ -3244,12 +4389,33 @@ _CHECKBOX_PANEL_CSS = """
     font-weight: 600;
     padding: 0.65rem 1rem;
     font-size: 0.9rem;
+    flex-shrink: 0;
 }
 .lca-hover-panel-body {
     padding: 0;
+    overflow: auto;
+    max-height: min(68vh, 500px);
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+    scrollbar-width: thin;
+}
+.lca-hover-panel-body::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+.lca-hover-panel-body::-webkit-scrollbar-thumb {
+    background: #b6c2d1;
+    border-radius: 4px;
 }
 .lca-norm-method-panel {
     padding: 1rem 1.1rem 1.05rem;
+    max-width: 100%;
+    box-sizing: border-box;
+}
+.lca-norm-method-panel .lca-norm-formula-block {
+    max-width: 100%;
+    overflow-x: auto;
+    overflow-y: visible;
 }
 .lca-norm-method-panel .shiny-input-radiogroup,
 .lca-norm-method-panel .shiny-input-checkboxgroup {
@@ -3300,7 +4466,7 @@ _CHECKBOX_PANEL_CSS = """
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
 }
-"""
+""")
 
 
 def _hover_panel_ui(
@@ -3412,40 +4578,18 @@ def _compact_values_table_ui(
     )
 
 
-def _asinh_score_guide_table_ui() -> ui.Tag:
-    rows = [
-        ("0", "Same as baseline"),
-        ("−0.2", "Slightly lower than baseline"),
-        ("−0.8", "Much lower than baseline"),
-        ("+0.2", "Slightly higher than baseline"),
-        ("+0.8", "Much higher than baseline"),
-    ]
-    return ui.tags.div(
-        ui.tags.table(
-            ui.tags.thead(
-                ui.tags.tr(
-                    ui.tags.th("Raw asinh score", class_="text-end"),
-                    ui.tags.th("Meaning"),
-                )
-            ),
-            ui.tags.tbody(
-                *[
-                    ui.tags.tr(
-                        ui.tags.td(score, class_="text-end"),
-                        ui.tags.td(meaning),
-                    )
-                    for score, meaning in rows
-                ]
-            ),
-            class_="table table-sm lca-norm-table lca-formula-guide-table",
+def _comparison_table_section(title: str, output_id: str) -> ui.Tag:
+    return ui.div(
+        ui.div(
+            ui.tags.h6(title, class_="mb-0"),
+            _table_download_buttons(output_id),
+            class_="d-flex justify-content-between align-items-center px-3 pt-3 mb-1 gap-2",
         ),
-        class_="lca-formula-guide-table-wrap",
+        ui.output_data_frame(output_id),
     )
 
 
-def _norm_formula_equation_ui(
-    method: str, baseline: str | None
-) -> ui.Tag:
+def _norm_formula_equation_ui(method: str) -> ui.Tag:
     if method == NORM_METHOD_RAW:
         return ui.div(
             ui.tags.p(
@@ -3456,209 +4600,41 @@ def _norm_formula_equation_ui(
             ),
         )
 
-    if method == NORM_METHOD_ASINH:
-        baseline_label = baseline or "baseline fiber"
-        blocks: list[ui.Tag] = [
-            ui.tags.p(
-                "Each impact category is scaled separately. The largest "
-                "|fiber − baseline| among selected fibers in that row is the "
-                "denominator (maximum absolute difference).",
-                class_="lca-formula-lead",
-            ),
-            ui.tags.div(
-                ui.tags.strong("Transformed score"),
-                " = asinh(",
-                ui.tags.span(
-                    "(",
-                    ui.tags.span("Fiber value", class_="lca-formula-var"),
-                    " − ",
-                    ui.tags.span(
-                        f"Baseline value ({baseline_label})",
-                        class_="lca-formula-var",
-                    ),
-                    ")",
-                    ui.tags.span(" / ", class_="lca-formula-var"),
-                    ui.tags.span(
-                        "Maximum absolute difference within that impact category",
-                        class_="lca-formula-var",
-                    ),
-                    ")",
-                    class_="lca-formula-equation-fraction",
-                ),
-                class_="lca-formula-equation",
-            ),
-            ui.tags.ul(
-                ui.tags.li(
-                    ui.tags.span("0", class_="lca-formula-badge"),
-                    ui.tags.span(
-                        f"Fiber equals {baseline_label} for that impact category"
-                    ),
-                ),
-                ui.tags.li(
-                    ui.tags.span("> 0", class_="lca-formula-badge"),
-                    ui.tags.span("Above the baseline for that impact category"),
-                ),
-                ui.tags.li(
-                    ui.tags.span("< 0", class_="lca-formula-badge"),
-                    ui.tags.span("Below the baseline for that impact category"),
-                ),
-                class_="lca-formula-legend",
-            ),
-            _asinh_score_guide_table_ui(),
-        ]
-        return ui.div(*blocks)
-
-    if method == NORM_METHOD_BASELINE:
-        baseline_label = baseline or "reference fiber"
-        return ui.div(
-            ui.tags.p(
-                "Each impact category is divided by the baseline fiber’s value "
-                "in that same row (internal / reference normalization).",
-                class_="lca-formula-lead",
-            ),
-            ui.tags.div(
-                ui.tags.strong("Normalized value"),
-                " = ",
-                ui.tags.span("Original value", class_="lca-formula-var"),
-                " ÷ ",
-                ui.tags.span(
-                    f"Original value of {baseline_label}",
-                    class_="lca-formula-var",
-                ),
-                class_="lca-formula-equation",
-            ),
-            ui.tags.ul(
-                ui.tags.li(
-                    ui.tags.span("1.00", class_="lca-formula-badge"),
-                    ui.tags.span(f"Same impact as {baseline_label} for that category"),
-                ),
-                ui.tags.li(
-                    ui.tags.span("< 1", class_="lca-formula-badge"),
-                    ui.tags.span("Lower impact than the baseline for that category"),
-                ),
-                ui.tags.li(
-                    ui.tags.span("> 1", class_="lca-formula-badge"),
-                    ui.tags.span("Higher impact than the baseline for that category"),
-                ),
-                class_="lca-formula-legend",
-            ),
-        )
-
-    if method == NORM_METHOD_ABS_MAX:
-        return ui.div(
-            ui.tags.p(
-                "Each impact category is scaled separately. Every fiber value "
-                "in that row is divided by the largest absolute value among "
-                "the compared fibers (range −1 to 1).",
-                class_="lca-formula-lead",
-            ),
-            ui.tags.div(
-                ui.tags.strong("Normalized value"),
-                " = ",
-                ui.tags.span("Original value", class_="lca-formula-var"),
-                " ÷ ",
-                ui.tags.span(
-                    "Maximum absolute value within that impact category",
-                    class_="lca-formula-var",
-                ),
-                class_="lca-formula-equation",
-            ),
-            ui.tags.ul(
-                ui.tags.li(
-                    ui.tags.span("1", class_="lca-formula-badge"),
-                    ui.tags.span("Highest absolute value in that impact category"),
-                ),
-                ui.tags.li(
-                    ui.tags.span("−1", class_="lca-formula-badge"),
-                    ui.tags.span(
-                        "Largest negative value relative to the max absolute "
-                        "in that impact category"
-                    ),
-                ),
-                ui.tags.li(
-                    ui.tags.span("0", class_="lca-formula-badge"),
-                    ui.tags.span("Zero impact for that category"),
-                ),
-                class_="lca-formula-legend",
-            ),
-        )
-
     return ui.div(
         ui.tags.p(
-            "Each impact category is scaled separately using the minimum and "
-            "maximum among the selected fibers in that row.",
+            "Each impact category is scaled separately. Every fiber value "
+            "in that row is divided by the largest absolute value among "
+            "the compared fibers (range −1 to 1).",
             class_="lca-formula-lead",
         ),
         ui.tags.div(
-            ui.tags.strong("Normalized value (%)"),
-            " = [",
+            ui.tags.strong("Normalized value"),
+            " = ",
+            ui.tags.span("Original value", class_="lca-formula-var"),
+            " ÷ ",
             ui.tags.span(
-                ui.tags.span("(", class_="lca-formula-var"),
-                "Original value",
-                ui.tags.span(" − ", class_="lca-formula-var"),
-                "Minimum value in that impact category",
-                ui.tags.span(")", class_="lca-formula-var"),
-                ui.tags.span(" / ", class_="lca-formula-var"),
-                ui.tags.span("(", class_="lca-formula-var"),
-                "Maximum value in that impact category",
-                ui.tags.span(" − ", class_="lca-formula-var"),
-                "Minimum value in that impact category",
-                ui.tags.span(")", class_="lca-formula-var"),
-                class_="lca-formula-equation-fraction",
+                "Maximum absolute value within that impact category",
+                class_="lca-formula-var",
             ),
-            "] × 100",
             class_="lca-formula-equation",
         ),
         ui.tags.ul(
             ui.tags.li(
-                ui.tags.span("0%", class_="lca-formula-badge"),
+                ui.tags.span("1", class_="lca-formula-badge"),
+                ui.tags.span("Highest absolute value in that impact category"),
+            ),
+            ui.tags.li(
+                ui.tags.span("−1", class_="lca-formula-badge"),
                 ui.tags.span(
-                    "Original value equals the minimum in that impact category"
+                    "Largest negative value relative to the max absolute "
+                    "in that impact category"
                 ),
             ),
             ui.tags.li(
-                ui.tags.span("100%", class_="lca-formula-badge"),
-                ui.tags.span(
-                    "Original value equals the maximum in that impact category"
-                ),
+                ui.tags.span("0", class_="lca-formula-badge"),
+                ui.tags.span("Zero impact for that category"),
             ),
             class_="lca-formula-legend",
-        ),
-    )
-
-
-def _range_normalization_formula_panel_ui() -> ui.Tag:
-    return _hover_panel_ui(
-        trigger_label="Range normalization",
-        icon_svg=_FORMULA_ICON_SVG,
-        title="Range normalization (0–100%)",
-        body=ui.div(
-            _norm_formula_equation_ui(NORM_METHOD_MINMAX, None),
-            class_="lca-formula-body",
-        ),
-    )
-
-
-def _baseline_normalization_formula_panel_ui(baseline: str | None) -> ui.Tag:
-    return _hover_panel_ui(
-        trigger_label="Baseline normalization",
-        icon_svg=_FORMULA_ICON_SVG,
-        title="Baseline normalization",
-        body=ui.div(
-            _norm_formula_equation_ui(NORM_METHOD_BASELINE, baseline),
-            class_="lca-formula-body",
-        ),
-    )
-
-
-def _asinh_baseline_formula_panel_ui(baseline: str | None) -> ui.Tag:
-    return _hover_panel_ui(
-        trigger_label="Asinh baseline scaling",
-        icon_svg=_FORMULA_ICON_SVG,
-        title="Asinh baseline scaling",
-        body=ui.div(
-            _norm_formula_equation_ui(NORM_METHOD_ASINH, baseline),
-            class_="lca-formula-body",
         ),
     )
 
@@ -3667,14 +4643,13 @@ def _normalization_hover_panel_ui(
     *,
     method_input_id: str,
     formula_output_id: str,
-    selected_method: str = NORM_METHOD_MINMAX,
+    selected_method: str = NORM_METHOD_ABS_MAX,
 ) -> ui.Tag:
-    """Hover panel: radio buttons to pick normalization and see the matching formula."""
+    """Hover panel: radio buttons to pick raw vs per-impact normalized data."""
     body = ui.div(
         ui.tags.p(
-            "Choose a normalization method. Baseline and asinh use the fiber "
-            "selected under Reference Fiber for Normalization. Range and "
-            "per-impact normalization do not use a reference fiber.",
+            "Choose raw values or per-impact normalized data (−1 to 1). "
+            "Each impact category is scaled independently.",
             class_="lca-formula-lead mb-2",
         ),
         ui.div(
@@ -3697,134 +4672,95 @@ def _normalization_hover_panel_ui(
     )
 
 
-def _radar_norm_preview_panel_ui(
-    table: pd.DataFrame,
-    impact_col: str,
-    *,
-    normalized: bool,
-    fiber_count: int,
-    impact_count: int,
-    norm_method: str,
-    baseline: str | None,
-    error_message: str | None = None,
+def _chart_guide_body(
+    *items: ui.Tag,
+    lead: ui.Tag | None = None,
+    lead_class: str = "lca-formula-lead mb-2",
+    list_class: str = "lca-formula-legend mb-0",
 ) -> ui.Tag:
-    if error_message:
-        body = ui.div(
-            ui.tags.p(error_message, class_="lca-formula-lead mb-0 text-danger"),
-            class_="lca-formula-body",
-        )
-        return _hover_panel_ui(
-            trigger_label="Normalized values table",
-            icon_svg=_TABLE_ICON_SVG,
-            title="Normalization",
-            body=body,
-        )
+    if lead is None:
+        lead = ui.tags.p("How to read this chart:", class_=lead_class)
+    return ui.div(
+        lead,
+        ui.tags.ul(*items, class_=list_class),
+        class_="lca-formula-body",
+    )
 
-    if impact_count < 1:
-        body = ui.div(
-            ui.tags.p(
-                "Select at least one environmental impact.",
-                class_="lca-formula-lead mb-0",
-            ),
-            class_="lca-formula-body",
-        )
-        trigger_label = "Values table"
-        panel_title = "Radar values"
-    elif normalized:
-        if norm_method == NORM_METHOD_BASELINE:
-            lead = (
-                f"Baseline-normalized values for {impact_count} impact(s) and "
-                f"{fiber_count} fiber(s). Reference: {baseline or '—'} "
-                "(1.00 = baseline for that impact category)."
-            )
-            value_format = "ratio"
-        elif norm_method == NORM_METHOD_ASINH:
-            lead = (
-                f"Asinh transformed scores for {impact_count} impact(s) and "
-                f"{fiber_count} fiber(s). Reference: {baseline or '—'} "
-                "(0 = baseline per category)."
-            )
-            value_format = "asinh"
-        elif norm_method == NORM_METHOD_ABS_MAX:
-            lead = (
-                f"Max-abs normalized values (−1 to 1) for {impact_count} "
-                f"impact(s) and {fiber_count} fiber(s). Each impact row is "
-                "scaled independently."
-            )
-            value_format = "ratio"
-        else:
-            lead = (
-                f"Range-normalized values (%) for {impact_count} impact(s) and "
-                f"{fiber_count} fiber(s). 0% = minimum; 100% = maximum in that "
-                "impact category."
-            )
-            value_format = "percent"
-        body = ui.div(
-            ui.tags.p(lead, class_="lca-formula-lead"),
-            _compact_values_table_ui(table, impact_col, value_format=value_format),
-            class_="lca-formula-body",
-        )
-        trigger_label = "Normalized values table"
-        panel_title = "Current radar normalization"
-    else:
-        fiber_note = (
-            f"{fiber_count} fiber(s)"
-            if fiber_count != 1
-            else "single fiber selected"
-        )
-        body = ui.div(
-            ui.tags.p(
-                f"Raw values for {impact_count} impact(s) and {fiber_note}.",
-                class_="lca-formula-lead",
-            ),
-            _compact_values_table_ui(table, impact_col, value_format="raw"),
-            class_="lca-formula-body",
-        )
-        trigger_label = "Values table"
-        panel_title = "Current radar values (raw)"
 
+def _chart_guide_panel(trigger_label: str, title: str, body: ui.Tag) -> ui.Tag:
     return _hover_panel_ui(
         trigger_label=trigger_label,
-        icon_svg=_TABLE_ICON_SVG,
-        title=panel_title,
+        icon_svg=_GUIDE_ICON_SVG,
+        title=title,
         body=body,
     )
 
 
 def _radar_guide_panel_ui() -> ui.Tag:
-    body = ui.div(
-        ui.tags.p("How to read this chart:", class_="lca-formula-lead"),
-        ui.tags.ul(
+    return _chart_guide_panel(
+        "Radar guide",
+        "How the radar chart works",
+        _chart_guide_body(
             ui.tags.li(
                 ui.tags.strong("Vertices"),
                 ": each selected environmental impact.",
             ),
             ui.tags.li(
-                ui.tags.strong("Single fiber"),
-                ": raw values per impact, or baseline / asinh normalization "
-                "against the reference fiber when one is selected.",
+                ui.tags.strong("Filled areas"),
+                ": one fiber per color (see legend).",
+            ),
+            ui.tags.li("Hover a point for raw and normalized values."),
+            lead_class="lca-formula-lead",
+            list_class="lca-formula-legend",
+        ),
+    )
+
+
+def _all_impacts_vertical_bar_guide_panel_ui() -> ui.Tag:
+    return _chart_guide_panel(
+        "Bar Chart guide",
+        "Vertical bar chart",
+        _chart_guide_body(
+            ui.tags.li(
+                "With one impact selected, bars compare fibers side by side. "
+                "With multiple impacts, fibers are grouped into bundles per "
+                "impact category on a single chart (see the legend for fiber colors).",
             ),
             ui.tags.li(
-                ui.tags.strong("Multiple fibers"),
-                ": use Normalization to pick raw values, range (0–100%), "
-                "baseline ratio, or asinh baseline scaling (0 = baseline).",
+                ui.tags.strong("Gray bars"),
+                " mean that fiber has no value (N/A) for that impact.",
             ),
-            class_="lca-formula-legend",
         ),
-        class_="lca-formula-body",
     )
-    return _hover_panel_ui(
-        trigger_label="Radar guide",
-        icon_svg=_GUIDE_ICON_SVG,
-        title="How the radar chart works",
-        body=body,
+
+
+def _all_impacts_horizontal_bar_guide_panel_ui() -> ui.Tag:
+    return _chart_guide_panel(
+        "Bar Chart guide",
+        "Horizontal bar chart",
+        _chart_guide_body(
+            ui.tags.li(
+                "Bars extend horizontally: impacts (or fibers when one impact "
+                "is selected) are listed on the vertical axis and values on "
+                "the horizontal axis.",
+            ),
+            ui.tags.li(
+                "With multiple impacts, fibers are grouped per impact category "
+                "(see the legend for fiber colors).",
+            ),
+            ui.tags.li(
+                ui.tags.strong("Gray bars"),
+                " mean that fiber has no value (N/A) for that impact.",
+            ),
+        ),
     )
 
 
 def _bar_chart_guide_panel_ui() -> ui.Tag:
-    body = ui.div(
-        ui.tags.p("How to read this chart:", class_="lca-formula-lead mb-2"),
-        ui.tags.ul(
+    return _chart_guide_panel(
+        "Bar Chart guide",
+        "Bar chart",
+        _chart_guide_body(
             ui.tags.li(
                 "One panel per selected environmental impact; bars compare "
                 "the chosen fibers side by side.",
@@ -3833,49 +4769,36 @@ def _bar_chart_guide_panel_ui() -> ui.Tag:
                 ui.tags.strong("Red fiber labels"),
                 " below a bar mean that fiber has no value (N/A) for that impact.",
             ),
-            ui.tags.li(
-                "Use Normalization to switch between raw values, range (0–100%), "
-                "baseline ratio, or asinh baseline scaling.",
-            ),
-            class_="lca-formula-legend mb-0",
         ),
-        class_="lca-formula-body",
-    )
-    return _hover_panel_ui(
-        trigger_label="Bar Chart guide",
-        icon_svg=_GUIDE_ICON_SVG,
-        title="Bar chart",
-        body=body,
     )
 
 
 def _heatmap_guide_panel_ui() -> ui.Tag:
-    body = ui.div(
-        ui.tags.p(
-            ui.tags.strong("Impact × Fiber heatmap (raw values)"),
-            class_="lca-formula-lead mb-2",
-        ),
-        ui.tags.ul(
+    return _chart_guide_panel(
+        "Heatmap guide",
+        "Heatmap",
+        _chart_guide_body(
             ui.tags.li("Each row scaled separately (impacts use different units)."),
             ui.tags.li(
                 "Light to dark blue = lowest to highest value within that impact row.",
             ),
             ui.tags.li(
-                ui.tags.span(class_="lca-heatmap-missing-sample", **{"aria-hidden": "true"}),
+                ui.tags.span(
+                    class_="lca-heatmap-missing-sample",
+                    **{"aria-hidden": "true"},
+                ),
                 " = missing or empty value in the dataset.",
             ),
             ui.tags.li("Hover a cell for the full name and exact value."),
-            class_="lca-formula-legend mb-0",
+            lead=ui.tags.p(
+                ui.tags.strong("Impact × Fiber heatmap (raw values)"),
+                class_="lca-formula-lead mb-2",
+            ),
         ),
-        class_="lca-formula-body",
-    )
-    return _hover_panel_ui(
-        trigger_label="Heatmap guide",
-        icon_svg=_GUIDE_ICON_SVG,
-        title="Heatmap",
-        body=body,
     )
 
+
+# ── App UI ───────────────────────────────────────────────────────────────────
 
 app_ui = ui.page_sidebar(
     ui.sidebar(
@@ -3883,12 +4806,10 @@ app_ui = ui.page_sidebar(
             _CHECKBOX_PANEL_CSS
             + _section_tab_nav_css()
             + _apply_button_css()
+            + _app_title_css()
             + _plot_card_css()
-        ),
-        ui.input_action_button(
-            "apply_settings",
-            "Apply",
-            class_="lca-apply-btn",
+            + _home_page_css()
+            + _team_page_css()
         ),
         _checkbox_dropdown_panel(
             "fiber",
@@ -3908,6 +4829,11 @@ app_ui = ui.page_sidebar(
             selected=[],
             max_height="280px",
             placeholder="Click to select environmental impacts…",
+        ),
+        ui.input_action_button(
+            "apply_settings",
+            "Apply",
+            class_="lca-apply-btn",
         ),
         ui.tags.script("""
 (function () {
@@ -3948,39 +4874,21 @@ app_ui = ui.page_sidebar(
   });
 })();
 """),
-        ui.div(
-            _select_card_panel(
-                "normalize_ref",
-                "Reference Fiber for Normalization",
-                INITIAL_DATA.fiber_cols,
-                selected=INITIAL_DATA.fiber_cols[0]
-                if INITIAL_DATA.fiber_cols
-                else None,
-            ),
-            id="normalize_ref_panel",
-        ),
-        ui.output_ui("baseline_ref_style"),
         width=360,
     ),
     ui.navset_tab(
+        _home_nav_panel(),
         ui.nav_panel(
             "Comparision Table",
             ui.card(
                 ui.card_header(
                     "Comparison Table - FU=100kg"
                 ),
-                ui.div(
-                    _normalization_hover_panel_ui(
-                        method_input_id="norm_method_data",
-                        formula_output_id="norm_formula_data",
-                        selected_method=NORM_METHOD_RAW,
-                    ),
-                    _table_download_buttons("data_tab"),
-                    class_="d-flex flex-wrap align-items-center justify-content-between gap-3 px-3 pt-2 pb-1",
-                ),
-                ui.output_data_frame("data_tab"),
+                _comparison_table_section("Raw data", "data_tab_raw"),
+                _comparison_table_section("Normalized data", "data_tab_normalized"),
                 full_screen=True,
             ),
+            value=TAB_COMPARISON,
         ),
         ui.nav_panel(
             "All Potential Impact Factors",
@@ -3996,16 +4904,22 @@ app_ui = ui.page_sidebar(
                 _chart_plot_output("all_impacts_plot"),
                 full_screen=True,
             ),
+            value=TAB_ALL_IMPACTS,
         ),
         *[_section_nav_panel(section_key) for section_key in IMPACT_SECTIONS],
-        ui.nav_panel(
-            "About",
-        ),
+        _method_nav_panel(),
+        _team_nav_panel(),
         id="main_tabs",
     ),
-    title="Life Cycle Assesment of Select Textile Fibers",
+    title=ui.input_action_button(
+        "nav_home_title",
+        APP_TITLE,
+        class_="lca-app-title-btn",
+    ),
     fillable=True,
 )
+
+# ── Server ───────────────────────────────────────────────────────────────────
 
 def server(input, output, session):
     data_store = reactive.Value(load_processed_data(DATA_FILE))
@@ -4021,7 +4935,7 @@ def server(input, output, session):
         return list(input.impact() or [])
 
     _applied_state = reactive.Value(_initial_applied_state())
-    _norm_method = reactive.Value(NORM_METHOD_MINMAX)
+    _norm_method = reactive.Value(NORM_METHOD_ABS_MAX)
     _live_fiber_cache = reactive.Value([])
     _live_impact_cache = reactive.Value([])
     _locking_section_impacts = reactive.Value(False)
@@ -4047,7 +4961,6 @@ def server(input, output, session):
         return AppliedState(
             fibers=list(_live_fiber_cache.get()),
             impacts=impacts,
-            baseline=input.normalize_ref() or None,
         )
 
     def _commit_applied_state(state: AppliedState) -> None:
@@ -4055,7 +4968,6 @@ def server(input, output, session):
             AppliedState(
                 fibers=list(state.fibers),
                 impacts=list(state.impacts),
-                baseline=state.baseline,
             )
         )
 
@@ -4067,8 +4979,7 @@ def server(input, output, session):
         state = _capture_applied_state()
         _commit_applied_state(state)
 
-    @reactive.calc
-    def comparison_table_df() -> pd.DataFrame:
+    def _comparison_table_for_method(norm_method: str) -> pd.DataFrame:
         state = _applied_state.get()
         data = current_data()
         if data.df.empty:
@@ -4084,10 +4995,17 @@ def server(input, output, session):
             list(state.fibers),
             data.df,
             data.impact_col,
-            norm_method=comparison_table_norm_method(),
-            baseline=applied_baseline() or "",
+            norm_method=norm_method,
             fiber_cols=data.fiber_cols,
         )
+
+    @reactive.calc
+    def comparison_table_raw_df() -> pd.DataFrame:
+        return _comparison_table_for_method(NORM_METHOD_RAW)
+
+    @reactive.calc
+    def comparison_table_normalized_df() -> pd.DataFrame:
+        return _comparison_table_for_method(NORM_METHOD_PER_IMPACT)
 
     _applying_fiber_all = reactive.Value(False)
     _applying_impact_all = reactive.Value(False)
@@ -4158,85 +5076,31 @@ def server(input, output, session):
             method = input[f"norm_method_{section}"]()
             if method:
                 return _coerce_norm_method([method])
-        if tab == "Bar Chart":
-            return _coerce_norm_method(
-                [input.norm_method_bar() or _norm_method.get()]
-            )
-        if tab == "Comparision Table":
-            return comparison_table_norm_method()
-        if tab == "All Potential Impact Factors":
+        if tab == TAB_ALL_IMPACTS:
             return _coerce_norm_method(
                 [input.norm_method_radar() or _norm_method.get()]
             )
         return _norm_method.get()
 
-    def comparison_table_norm_method() -> str:
-        return _coerce_norm_method([input.norm_method_data() or NORM_METHOD_RAW])
-
-    def bar_chart_norm_method() -> str:
-        return _coerce_norm_method(
-            [input.norm_method_bar() or _norm_method.get()]
-        )
+    def _read_norm_method(radio_id: str) -> str:
+        return _coerce_norm_method([input[radio_id]() or _norm_method.get()])
 
     def radar_norm_method() -> str:
-        return _coerce_norm_method(
-            [input.norm_method_radar() or _norm_method.get()]
-        )
+        return _read_norm_method(NORM_METHOD_RADAR_ID)
+
+    def bar_all_norm_method() -> str:
+        return _read_norm_method(NORM_METHOD_BAR_ALL_ID)
 
     def section_norm_method(section_key: str) -> str:
-        return _coerce_norm_method(
-            [input[f"norm_method_{section_key}"]() or _norm_method.get()]
-        )
-
-    def baseline_fiber() -> str | None:
-        """Live sidebar baseline (formula panels before Apply)."""
-        return input.normalize_ref() or None
-
-    def applied_baseline() -> str | None:
-        """Baseline committed by Apply; used by charts and tables."""
-        return _applied_state.get().baseline
-
-    @reactive.calc
-    def baseline_ref_inactive() -> bool:
-        if _baseline_ref_panel_inactive(_norm_method.get()):
-            return True
-        return _baseline_ref_panel_inactive(comparison_table_norm_method())
-
-    @output
-    @render.ui
-    def baseline_ref_style() -> ui.Tag:
-        if baseline_ref_inactive():
-            return ui.div(
-                ui.tags.style(_BASELINE_REF_INACTIVE_CSS),
-                ui.tags.script(
-                    """
-(function () {
-  var panel = document.getElementById("normalize_ref_panel");
-  if (panel) panel.classList.add("lca-baseline-inactive");
-})();
-"""
-                ),
-            )
-        return ui.tags.script(
-            """
-(function () {
-  var panel = document.getElementById("normalize_ref_panel");
-  if (panel) panel.classList.remove("lca-baseline-inactive");
-})();
-"""
-        )
+        return _read_norm_method(f"norm_method_{section_key}")
 
     def _set_norm_method(method: str) -> None:
         method = _coerce_norm_method([method])
         _syncing_norm_method.set(True)
         try:
             _norm_method.set(method)
-            ui.update_radio_buttons("norm_method_radar", selected=method)
-            ui.update_radio_buttons("norm_method_bar", selected=method)
-            for section_key in IMPACT_SECTIONS:
-                ui.update_radio_buttons(
-                    f"norm_method_{section_key}", selected=method
-                )
+            for radio_id in _norm_radio_ids():
+                ui.update_radio_buttons(radio_id, selected=method)
         finally:
             _syncing_norm_method.set(False)
 
@@ -4292,62 +5156,20 @@ def server(input, output, session):
             selected=[i for i in (input.impact() or []) if i in allowed],
         )
 
-    @reactive.effect
-    @reactive.event(input.norm_method_radar)
-    def _sync_norm_method_from_radar() -> None:
-        if _syncing_norm_method.get():
-            return
-        method = input.norm_method_radar()
-        if method and method != _norm_method.get():
-            _set_norm_method(method)
-
-    @reactive.effect
-    @reactive.event(input.norm_method_bar)
-    def _sync_norm_method_from_bar() -> None:
-        if _syncing_norm_method.get():
-            return
-        method = input.norm_method_bar()
-        if method and method != _norm_method.get():
-            _set_norm_method(method)
-
-    @reactive.effect
-    @reactive.event(input.norm_method_data)
-    def _sync_norm_method_from_data() -> None:
-        if _syncing_norm_method.get():
-            return
-        method = input.norm_method_data()
-        if not method or method == NORM_METHOD_RAW:
-            return
-        if method != _norm_method.get():
-            _set_norm_method(method)
-
-    def _register_section_norm_sync(section_key: str) -> None:
+    def _register_norm_method_sync(radio_id: str) -> None:
         @reactive.effect
-        @reactive.event(input[f"norm_method_{section_key}"])
-        def _sync_norm_method_from_section() -> None:
+        @reactive.event(input[radio_id])
+        def _sync_norm_from_radio() -> None:
             if _syncing_norm_method.get():
                 return
-            method = input[f"norm_method_{section_key}"]()
+            method = input[radio_id]()
             if method and method != _norm_method.get():
                 _set_norm_method(method)
 
-    for _sk in IMPACT_SECTIONS:
-        _register_section_norm_sync(_sk)
+        _sync_norm_from_radio.__name__ = f"_sync_norm_{radio_id}"
 
-    @reactive.effect
-    @reactive.event(input.fiber)
-    def _sync_baseline_fiber_choices() -> None:
-        data = current_data()
-        choices = data.fiber_cols
-        ref = input.normalize_ref()
-        if ref in choices:
-            return
-        if choices:
-            ui.update_selectize(
-                "normalize_ref",
-                choices=choices,
-                selected=choices[0],
-            )
+    for _radio_id in _norm_radio_ids():
+        _register_norm_method_sync(_radio_id)
 
     def _sync_checkbox_groups(
         data: LcaData, *, previous: LcaData | None = None
@@ -4376,10 +5198,6 @@ def server(input, output, session):
             impact_choices,
             all_was_selected=impact_all,
         )
-        ref_choices = data.fiber_cols
-        ref = input.normalize_ref()
-        if ref not in ref_choices and ref_choices:
-            ref = ref_choices[0]
         ui.update_checkbox_group(
             "fiber",
             choices=data.fiber_cols,
@@ -4389,11 +5207,6 @@ def server(input, output, session):
             "impact",
             choices=impact_choices,
             selected=impact_selected,
-        )
-        ui.update_selectize(
-            "normalize_ref",
-            choices=ref_choices,
-            selected=ref,
         )
         ui.update_switch(
             "fiber_all",
@@ -4416,14 +5229,10 @@ def server(input, output, session):
             applied_impacts = [
                 i for i in prev_applied.impacts if i in impact_choices
             ]
-        applied_baseline = prev_applied.baseline
-        if applied_baseline not in ref_choices and ref_choices:
-            applied_baseline = ref
         _commit_applied_state(
             AppliedState(
                 fibers=applied_fibers,
                 impacts=applied_impacts,
-                baseline=applied_baseline,
             )
         )
         _live_fiber_cache.set(fiber_selected)
@@ -4552,88 +5361,62 @@ def server(input, output, session):
     def fiber_picker_summary():
         input.fiber()
         data = current_data()
-        selected = _live_fiber_cache.get()
-        text = _picker_summary_label(
-            selected,
+        return _render_picker_summary(
+            _live_fiber_cache.get(),
             data.fiber_cols,
             placeholder="Click to select fiber types…",
         )
-        cls = "lca-picker-summary-text"
-        if not selected:
-            cls += " lca-picker-summary-placeholder"
-        return ui.tags.span(text, class_=cls)
 
     @output
     @render.ui
     def impact_picker_summary():
         input.impact()
         data = current_data()
-        selected = _live_impact_cache.get()
-        text = _picker_summary_label(
-            selected,
+        return _render_picker_summary(
+            _live_impact_cache.get(),
             data.impact_choices,
             placeholder="Click to select environmental impacts…",
-        )
-        cls = "lca-picker-summary-text"
-        if not selected:
-            cls += " lca-picker-summary-placeholder"
-        return ui.tags.span(text, class_=cls)
-
-    @output
-    @render.text
-    def selection_summary():
-        """Kept for older UI sessions after hot-reload."""
-        return ""
-
-    @output
-    @render.ui
-    def data_tab_norm_buttons():
-        """Kept for older UI sessions after hot-reload."""
-        return ui.div()
-
-    @output
-    @render.ui
-    def data_tab_formula():
-        """Kept for older UI sessions after hot-reload."""
-        return ui.div()
-
-    @output
-    @render.ui
-    def norm_formula_data():
-        return ui.div(
-            _norm_formula_equation_ui(
-                comparison_table_norm_method(), baseline_fiber()
-            ),
-            class_="lca-norm-formula-block",
         )
 
     @output
     @render.ui
     def norm_formula_radar():
         return ui.div(
-            _norm_formula_equation_ui(current_norm_method(), baseline_fiber()),
+            _norm_formula_equation_ui(radar_norm_method()),
             class_="lca-norm-formula-block",
         )
 
     @output
     @render.ui
-    def norm_formula_bar():
+    def norm_formula_bar_all():
         return ui.div(
-            _norm_formula_equation_ui(bar_chart_norm_method(), baseline_fiber()),
+            _norm_formula_equation_ui(bar_all_norm_method()),
             class_="lca-norm-formula-block",
         )
 
-    @output(id="data_tab", suspend_when_hidden=True)
+    @output(id="data_tab_raw", suspend_when_hidden=True)
     @render.data_frame
-    def data_tab():
-        return comparison_table_df()
+    def data_tab_raw():
+        return comparison_table_raw_df()
+
+    @output(id="data_tab_normalized", suspend_when_hidden=True)
+    @render.data_frame
+    def data_tab_normalized():
+        return comparison_table_normalized_df()
 
     _register_table_csv_download_handler(
         output,
         render,
-        table_id="data_tab",
-        df_fn=comparison_table_df,
-        basename_fn=lambda: "lca-comparison-table",
+        table_id="data_tab_raw",
+        df_fn=comparison_table_raw_df,
+        basename_fn=lambda: "lca-comparison-table-raw",
+    )
+    _register_table_csv_download_handler(
+        output,
+        render,
+        table_id="data_tab_normalized",
+        df_fn=comparison_table_normalized_df,
+        basename_fn=lambda: "lca-comparison-table-normalized",
     )
 
     @reactive.calc
@@ -4641,9 +5424,12 @@ def server(input, output, session):
         state = _applied_state.get()
         data = current_data()
         chart_id = input.chart_kind_all()
-        norm_method = (
-            radar_norm_method() if chart_id == "radar" else NORM_METHOD_RAW
-        )
+        if chart_id in ("bar_vertical", "bar_horizontal"):
+            norm_method = bar_all_norm_method()
+        elif chart_id == "radar":
+            norm_method = radar_norm_method()
+        else:
+            norm_method = NORM_METHOD_RAW
         return _build_chart_figure(
             chart_id,
             list(state.impacts),
@@ -4651,7 +5437,6 @@ def server(input, output, session):
             data.df,
             data.impact_col,
             norm_method=norm_method,
-            baseline=applied_baseline() or "",
         )
 
     @output(id="all_impacts_plot", suspend_when_hidden=True)
@@ -4672,17 +5457,36 @@ def server(input, output, session):
     def all_impacts_toolbar() -> ui.Tag:
         chart_id = input.chart_kind_all()
         items: list[ui.Tag] = []
-        if chart_id == "radar":
+        if chart_id == "heatmap":
+            items.append(ui.output_ui("all_impacts_values_preview"))
+            items.append(_heatmap_guide_panel_ui())
+        elif chart_id == "radar":
             items.append(
                 _normalization_hover_panel_ui(
                     method_input_id="norm_method_radar",
                     formula_output_id="norm_formula_radar",
                 )
             )
+            items.append(ui.output_ui("all_impacts_values_preview"))
             items.append(_radar_guide_panel_ui())
-            items.append(ui.output_ui("all_impacts_radar_preview"))
-        elif chart_id == "heatmap":
-            items.append(_heatmap_guide_panel_ui())
+        elif chart_id == "bar_vertical":
+            items.append(
+                _normalization_hover_panel_ui(
+                    method_input_id="norm_method_bar_all",
+                    formula_output_id="norm_formula_bar_all",
+                )
+            )
+            items.append(ui.output_ui("all_impacts_values_preview"))
+            items.append(_all_impacts_vertical_bar_guide_panel_ui())
+        elif chart_id == "bar_horizontal":
+            items.append(
+                _normalization_hover_panel_ui(
+                    method_input_id="norm_method_bar_all",
+                    formula_output_id="norm_formula_bar_all",
+                )
+            )
+            items.append(ui.output_ui("all_impacts_values_preview"))
+            items.append(_all_impacts_horizontal_bar_guide_panel_ui())
         if not items:
             return ui.div()
         return ui.div(
@@ -4690,17 +5494,25 @@ def server(input, output, session):
             class_="d-flex flex-wrap align-items-center gap-3 px-2 pt-2 pb-1",
         )
 
-    @output(id="all_impacts_radar_preview", suspend_when_hidden=True)
+    @output(id="all_impacts_values_preview", suspend_when_hidden=True)
     @render.ui
-    def all_impacts_radar_preview():
+    def all_impacts_values_preview():
         state = _applied_state.get()
         data = current_data()
-        return _radar_norm_preview_tag(
+        chart_id = input.chart_kind_all()
+        if chart_id == "heatmap":
+            norm_method = NORM_METHOD_RAW
+        elif chart_id == "radar":
+            norm_method = radar_norm_method()
+        elif chart_id in ("bar_vertical", "bar_horizontal"):
+            norm_method = bar_all_norm_method()
+        else:
+            norm_method = NORM_METHOD_RAW
+        return _all_impacts_values_preview_tag(
             data,
             list(state.impacts),
             list(state.fibers),
-            norm_method=radar_norm_method(),
-            baseline=applied_baseline(),
+            norm_method=norm_method,
         )
 
     def _register_impact_section_outputs(section_key: str) -> None:
@@ -4715,7 +5527,6 @@ def server(input, output, session):
                 data.df,
                 data.impact_col,
                 norm_method=section_norm_method(section_key),
-                baseline=applied_baseline() or "",
             )
 
         section_figure.__name__ = f"section_figure_{section_key}"
@@ -4742,10 +5553,7 @@ def server(input, output, session):
         @render.ui
         def section_norm_formula() -> ui.Tag:
             return ui.div(
-                _norm_formula_equation_ui(
-                    section_norm_method(section_key),
-                    baseline_fiber(),
-                ),
+                _norm_formula_equation_ui(section_norm_method(section_key)),
                 class_="lca-norm-formula-block",
             )
 
@@ -4764,6 +5572,26 @@ def server(input, output, session):
 
     for _section_key in IMPACT_SECTIONS:
         _register_impact_section_outputs(_section_key)
+
+    _HOME_NAV_BUTTONS: dict[str, str] = {
+        "nav_home_title": TAB_HOME,
+        "home_nav_comparison_table": TAB_COMPARISON,
+        "home_nav_all_impacts": TAB_ALL_IMPACTS,
+        "home_nav_method": TAB_METHOD,
+        "home_nav_team": TAB_TEAM,
+        **{str(card["button_id"]): str(card["tab"]) for card in HOME_SECTION_CARDS},
+    }
+
+    def _register_home_nav_button(button_id: str, tab_value: str) -> None:
+        @reactive.effect
+        @reactive.event(input[button_id])
+        def _go_to_tab() -> None:
+            ui.update_navs("main_tabs", selected=tab_value)
+
+        _go_to_tab.__name__ = f"_home_nav_{tab_value}"
+
+    for _btn_id, _tab_value in _HOME_NAV_BUTTONS.items():
+        _register_home_nav_button(_btn_id, _tab_value)
 
 
 
