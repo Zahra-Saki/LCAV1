@@ -446,62 +446,90 @@ TAB_TEAM = "team_contributions"
 APP_TITLE = "Life Cycle Assessment of Select Textile Fibers"
 
 _TEAM_MEMBER = dict[str, str | list[str]]
-_TEAM_ORG = dict[str, str | list[_TEAM_MEMBER] | None]
+_TEAM_ORG_INFO = dict[str, str]
+_TEAM_ORG_GROUP = dict[str, str | list[_TEAM_MEMBER]]
+_TEAM_FUNCTION_AREA = dict[str, str | list[_TEAM_ORG_GROUP]]
 
-TEAM_ORGANIZATIONS: tuple[_TEAM_ORG, ...] = (
-    {
-        "id": "nc_state",
+TEAM_ORG_REGISTRY: dict[str, _TEAM_ORG_INFO] = {
+    "nc_state": {
         "name": "North Carolina State University",
         "logo": "NC-State-Logo.png",
         "website": "https://www.ncsu.edu/",
-        "members": [
+    },
+    "nlr": {
+        "name": "National Laboratory of the Rockies",
+        "logo": "NLR-logo.jpg",
+        "website": "https://www.nlr.gov/",
+    },
+    "textile_engine": {
+        "name": "Textile Innovation Engine",
+        "logo": "Engine-logo.png",
+        "website": "https://textileinnovationengine.org/",
+    },
+    "walmart": {
+        "name": "Walmart Foundation",
+        "logo": "walmart-logo.webp",
+        "website": "https://www.walmart.org/",
+    },
+}
+
+TEAM_FUNCTION_AREAS: tuple[_TEAM_FUNCTION_AREA, ...] = (
+    {
+        "title": "LCA Research",
+        "orgs": [
             {
-                "name": "Dr. Karen Leonas",
-                "role": "Lead PI and Project Lead",
-                "contributions": ["LCA model development"],
+                "org_id": "nc_state",
+                "members": [
+                    {
+                        "name": "Dr. Karen K. Leonas",
+                        "role": "Lead PI and Project Lead",
+                        "contributions": "LCA model development",
+                    },
+                    {
+                        "name": "AYA Imam",
+                        "role": "Graduate Student",
+                        "contributions": "LCA model development",
+                    },
+                    {
+                        "name": "Gloria Liu",
+                        "role": "Graduate Student",
+                        "contributions": "LCA model development",
+                    },
+                ],
             },
             {
-                "name": "Dr. Zahra Saki",
-                "role": "Co-PI",
-                "contributions": ["Data visualization", "Website development"],
-            },
-            {
-                "name": "AYA [Last Name]",
-                "role": "Graduate Student",
-                "contributions": ["LCA model development"],
-            },
-            {
-                "name": "Gloria [Last Name]",
-                "role": "Graduate Student",
-                "contributions": ["LCA model development"],
-            },
-            {
-                "name": "Ehsan Faghih",
-                "role": "Graduate Student",
-                "contributions": ["Data visualization", "Website development"],
+                "org_id": "nlr",
+                "members": [
+                    {"name": "Katrina Kanuar"},
+                    {"name": "Elisabeth Van Roijen"},
+                    {"name": "Taylor Urkert"},
+                ],
             },
         ],
     },
     {
-        "id": "textile_engine",
-        "name": "Textile Innovation Engine",
-        "logo": "Engine-logo.png",
-        "website": "https://textileinnovationengine.org/",
-        "members": None,
-    },
-    {
-        "id": "walmart",
-        "name": "Walmart Foundation",
-        "logo": "walmart-logo.webp",
-        "website": "https://www.walmart.org/",
-        "members": None,
-    },
-    {
-        "id": "nlr",
-        "name": "National Recycling Laboratory",
-        "logo": "NLR-logo.jpg",
-        "website": "https://www.nlr.gov/",
-        "members": None,
+        "title": "Data Visualization and Website Development",
+        "orgs": [
+            {
+                "org_id": "nc_state",
+                "members": [
+                    {
+                        "name": "Dr. Zahra Saki",
+                        "role": "Co-PI",
+                        "contributions": (
+                            "Data visualization and website development"
+                        ),
+                    },
+                    {
+                        "name": "Ehsan Faghih",
+                        "role": "Graduate Student",
+                        "contributions": (
+                            "Data visualization and website development"
+                        ),
+                    },
+                ],
+            },
+        ],
     },
 )
 
@@ -3535,8 +3563,22 @@ def _home_nav_group(
 def _home_page_ui() -> ui.Tag:
     return ui.div(
         ui.tags.p(
-            "Choose a view below to explore fiber comparisons. "
-            "Use the sidebar to pick fibers and impacts, then click Apply.",
+            "This tool was designed to provide a comparison of select potential "
+            "environmental impacts using Life Cycle Assessment frameworks and "
+            "methodologies to compare selected fibers used in textile products. "
+            "The information enables access to reliable data regarding these "
+            "impacts. It is hoped that using this tool, designers, product "
+            "developers and sourcing professionals can make informed decisions "
+            "regarding raw materials selection.",
+            class_="lca-home-lead",
+        ),
+        ui.tags.p(
+            "In addition, the information can aid industry professionals in "
+            "understanding their environmental footprint based on raw material "
+            "production/cultivation processes. Unless one uses the specific "
+            "production/cultivation and processing methods described, it is not "
+            "intended to be used to communicate validated claims about those "
+            "materials to consumers.",
             class_="lca-home-lead",
         ),
         ui.div(
@@ -3611,29 +3653,69 @@ def _team_page_css() -> str:
     return """
 .lca-team-page {
     padding: 1.25rem 1.5rem 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.15rem;
 }
-.lca-team-orgs-row {
+.lca-team-function-card {
+    border: 1px solid #c5d9fc;
+    border-radius: 12px;
+    background: radial-gradient(
+        ellipse 130% 120% at 50% 12%,
+        #f7faff 0%,
+        #edf3ff 40%,
+        #e2ebff 100%
+    );
+    padding: 1.1rem 1.15rem 1.15rem;
+    box-shadow: 0 1px 4px rgba(13, 110, 253, 0.07);
+}
+.lca-team-function-title {
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: #1a2b42;
+    margin: 0 0 0.85rem 0;
+}
+.lca-team-function-card--single {
+    width: calc((100% - 0.85rem) / 2);
+    max-width: 100%;
+}
+.lca-team-function-card--single .lca-team-org-subcards {
+    grid-template-columns: 1fr;
+}
+.lca-team-org-subcards {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 1rem;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.85rem;
     align-items: start;
 }
-.lca-team-org-column {
+@media (max-width: 640px) {
+    .lca-team-org-subcards {
+        grid-template-columns: 1fr;
+    }
+    .lca-team-function-card--single {
+        width: 100%;
+    }
+}
+.lca-team-org-subcard {
     display: flex;
     flex-direction: column;
     align-items: stretch;
-    gap: 0.85rem;
+    gap: 0.75rem;
     min-width: 0;
+    border: 1px solid #cfe2ff;
+    border-radius: 10px;
+    background: #ffffff;
+    padding: 0.85rem 0.8rem 0.9rem;
 }
 .lca-team-logo-link {
     display: flex;
     align-items: center;
     justify-content: center;
     width: 100%;
-    min-height: 5.5rem;
-    padding: 0.65rem 0.5rem;
+    min-height: 4.75rem;
+    padding: 0.5rem 0.45rem;
     border: none;
-    border-radius: 10px;
+    border-radius: 8px;
     background: transparent;
     box-shadow: none;
     cursor: pointer;
@@ -3659,69 +3741,26 @@ def _team_page_css() -> str:
 .lca-team-logo-img {
     display: block;
     max-width: 100%;
-    max-height: 4.5rem;
+    max-height: 4rem;
     width: auto;
     height: auto;
     object-fit: contain;
 }
-.lca-team-members {
-    display: flex;
-    flex-direction: column;
-    gap: 0.65rem;
-}
-.lca-team-member-card {
-    border: 1px solid #cfe2ff;
-    border-radius: 10px;
-    background: #f8fbff;
-    padding: 0.75rem 0.8rem;
-}
-.lca-team-member-name {
-    font-size: 0.92rem;
-    font-weight: 700;
-    color: #1a2b42;
-    margin: 0 0 0.2rem 0;
-    line-height: 1.3;
-}
-.lca-team-member-role {
-    font-size: 0.8rem;
-    color: #495057;
-    margin: 0 0 0.45rem 0;
-    line-height: 1.35;
-}
-.lca-team-contrib-label {
-    display: block;
-    font-size: 0.72rem;
-    font-weight: 600;
-    letter-spacing: 0.02em;
-    text-transform: uppercase;
-    color: #6c757d;
-    margin-bottom: 0.2rem;
-}
-.lca-team-contrib-list {
+.lca-team-member-list {
     margin: 0;
-    padding-left: 1.1rem;
-    font-size: 0.8rem;
+    padding-left: 1.15rem;
+    font-size: 0.84rem;
     color: #343a40;
-    line-height: 1.4;
+    line-height: 1.45;
 }
-.lca-team-contrib-text {
-    font-size: 0.8rem;
-    color: #343a40;
-    margin: 0;
-    line-height: 1.4;
+.lca-team-member-list li {
+    margin-bottom: 0.35rem;
 }
-.lca-team-tba-card {
-    border: 1px dashed #c5d9fc;
-    border-radius: 10px;
-    background: #fbfdff;
-    color: #6c757d;
-    font-size: 0.85rem;
-    font-weight: 600;
-    text-align: center;
-    padding: 1.1rem 0.75rem;
+.lca-team-member-list li:last-child {
+    margin-bottom: 0;
 }
 .lca-team-ack-section {
-    margin-top: 1.5rem;
+    margin-top: 0.35rem;
     padding-top: 1rem;
     border-top: 1px solid #dee2e6;
 }
@@ -3731,16 +3770,6 @@ def _team_page_css() -> str:
     line-height: 1.5;
     margin: 0;
     max-width: 52rem;
-}
-@media (max-width: 1100px) {
-    .lca-team-orgs-row {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-}
-@media (max-width: 640px) {
-    .lca-team-orgs-row {
-        grid-template-columns: 1fr;
-    }
 }
 """
 
@@ -3758,75 +3787,79 @@ def _logo_data_uri(filename: str) -> str:
     return f"data:{mime};base64,{encoded}"
 
 
-def _team_member_contributions_ui(contributions: list[str]) -> ui.Tag:
-    if len(contributions) == 1:
-        return ui.tags.p(contributions[0], class_="lca-team-contrib-text")
-    return ui.tags.ul(
-        *[ui.tags.li(item) for item in contributions],
-        class_="lca-team-contrib-list",
+def _team_member_line_text(member: _TEAM_MEMBER) -> str:
+    name = str(member["name"])
+    role = member.get("role")
+    contributions = member.get("contributions")
+    if role and contributions:
+        if isinstance(contributions, list):
+            contrib_text = ", ".join(str(item) for item in contributions)
+        else:
+            contrib_text = str(contributions)
+        return f"{name}: {role}, {contrib_text}"
+    if role:
+        return f"{name}: {role}"
+    return name
+
+
+def _team_logo_link_ui(org: _TEAM_ORG_INFO) -> ui.Tag:
+    return ui.tags.a(
+        ui.tags.img(
+            src=_logo_data_uri(str(org["logo"])),
+            alt=str(org["name"]),
+            class_="lca-team-logo-img",
+        ),
+        href=str(org["website"]),
+        target="_blank",
+        rel="noopener noreferrer",
+        class_="lca-team-logo-link",
+        title=str(org["name"]),
+        **{"aria-label": f"Visit {org['name']} website (opens in new tab)"},
     )
 
 
-def _team_member_card_ui(member: _TEAM_MEMBER) -> ui.Tag:
-    contributions = member["contributions"]
-    contrib_list = (
-        contributions
-        if isinstance(contributions, list)
-        else [str(contributions)]
-    )
+def _team_org_subcard_ui(org_group: _TEAM_ORG_GROUP) -> ui.Tag:
+    org_id = str(org_group["org_id"])
+    org = TEAM_ORG_REGISTRY[org_id]
+    members = org_group["members"]
+    member_list = members if isinstance(members, list) else []
     return ui.tags.div(
-        ui.tags.h6(str(member["name"]), class_="lca-team-member-name"),
-        ui.tags.p(str(member["role"]), class_="lca-team-member-role"),
+        _team_logo_link_ui(org),
+        ui.tags.ul(
+            *[
+                ui.tags.li(_team_member_line_text(member))
+                for member in member_list
+            ],
+            class_="lca-team-member-list",
+        ),
+        class_="lca-team-org-subcard",
+    )
+
+
+def _team_function_card_ui(area: _TEAM_FUNCTION_AREA) -> ui.Tag:
+    orgs = area["orgs"]
+    org_list = orgs if isinstance(orgs, list) else []
+    card_class = "lca-team-function-card"
+    if len(org_list) == 1:
+        card_class += " lca-team-function-card--single"
+    return ui.tags.div(
+        ui.tags.h5(str(area["title"]), class_="lca-team-function-title"),
         ui.tags.div(
-            ui.tags.span("Contributions", class_="lca-team-contrib-label"),
-            _team_member_contributions_ui(contrib_list),
+            *[_team_org_subcard_ui(org_group) for org_group in org_list],
+            class_="lca-team-org-subcards",
         ),
-        class_="lca-team-member-card",
-    )
-
-
-def _team_org_members_ui(members: list[_TEAM_MEMBER] | None) -> ui.Tag:
-    if not members:
-        return ui.tags.div("TBA", class_="lca-team-tba-card")
-    return ui.div(
-        *[_team_member_card_ui(member) for member in members],
-        class_="lca-team-members",
-    )
-
-
-def _team_org_column_ui(org: _TEAM_ORG) -> ui.Tag:
-    members = org["members"]
-    member_list = members if isinstance(members, list) else None
-    return ui.tags.div(
-        ui.tags.a(
-            ui.tags.img(
-                src=_logo_data_uri(str(org["logo"])),
-                alt=str(org["name"]),
-                class_="lca-team-logo-img",
-            ),
-            href=str(org["website"]),
-            target="_blank",
-            rel="noopener noreferrer",
-            class_="lca-team-logo-link",
-            title=str(org["name"]),
-            **{"aria-label": f"Visit {org['name']} website (opens in new tab)"},
-        ),
-        _team_org_members_ui(member_list),
-        class_="lca-team-org-column",
+        class_=card_class,
     )
 
 
 def _team_page_ui() -> ui.Tag:
     return ui.div(
-        ui.div(
-            *[_team_org_column_ui(org) for org in TEAM_ORGANIZATIONS],
-            class_="lca-team-orgs-row",
-        ),
+        *[_team_function_card_ui(area) for area in TEAM_FUNCTION_AREAS],
         ui.div(
             ui.tags.p(
                 "This project was supported through collaboration with the "
                 "NC State University, Textile Innovation Engine, Walmart "
-                "Foundation, and the National Recycling Laboratory.",
+                "Foundation, and the National Laboratory of the Rockies.",
                 class_="lca-team-ack",
             ),
             class_="lca-team-ack-section",
@@ -5598,4 +5631,5 @@ def server(input, output, session):
 
 app = App(app_ui, server)
 
+"""rsconnect deploy shiny ."""
 """rsconnect deploy shiny ."""
