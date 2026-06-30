@@ -443,6 +443,7 @@ TAB_COMPARISON = "comparison_table"
 TAB_ALL_IMPACTS = "all_impacts"
 TAB_METHOD = "method"
 TAB_TEAM = "team_contributions"
+TAB_REFERENCES = "references"
 APP_TITLE = "Life Cycle Assessment of Select Textile Fibers"
 
 _TEAM_MEMBER = dict[str, str | list[str]]
@@ -472,6 +473,13 @@ TEAM_ORG_REGISTRY: dict[str, _TEAM_ORG_INFO] = {
         "website": "https://www.walmart.org/",
     },
 }
+
+PARTNER_ORG_ORDER: tuple[str, ...] = (
+    "nc_state",
+    "textile_engine",
+    "walmart",
+    "nlr",
+)
 
 TEAM_FUNCTION_AREAS: tuple[_TEAM_FUNCTION_AREA, ...] = (
     {
@@ -667,6 +675,62 @@ def _apply_button_css() -> str:
 """
 
 
+def _sidebar_note_css() -> str:
+    return """
+.lca-sidebar-note-wrap {
+    margin-top: 0.65rem;
+    padding: 0 0.35rem;
+    text-align: center;
+}
+.lca-sidebar-note {
+    font-size: 0.78rem;
+    line-height: 1.5;
+    color: #495057;
+    margin: 0 auto;
+    max-width: 18rem;
+    text-align: center;
+}
+.lca-sidebar-note .lca-sidebar-method-link.action-link {
+    display: inline;
+    padding: 0;
+    margin: 0;
+    border: none;
+    background: transparent;
+    color: #0a58ca;
+    font-size: inherit;
+    font-weight: 600;
+    text-decoration: underline;
+    vertical-align: baseline;
+    cursor: pointer;
+}
+.lca-sidebar-note .lca-sidebar-method-link.action-link:hover,
+.lca-sidebar-note .lca-sidebar-method-link.action-link:focus {
+    color: #084298;
+    background: transparent;
+    box-shadow: none;
+}
+"""
+
+
+def _sidebar_methods_note_ui() -> ui.Tag:
+    return ui.div(
+        ui.tags.p(
+            ui.tags.span(
+                "To make validated consumer claims about these materials, you "
+                "must follow the exact production, cultivation, and processing "
+            ),
+            ui.input_action_link(
+                "nav_method_sidebar",
+                "methods",
+                class_="lca-sidebar-method-link",
+            ),
+            ui.tags.span(" described."),
+            class_="lca-sidebar-note",
+        ),
+        class_="lca-sidebar-note-wrap",
+    )
+
+
 def _app_title_css() -> str:
     """Navbar title styled as a plain link-like control."""
     return """
@@ -689,6 +753,93 @@ def _app_title_css() -> str:
   text-decoration: underline;
   background: transparent !important;
   box-shadow: none !important;
+}
+"""
+
+
+def _partner_footer_css() -> str:
+    return """
+.lca-tab-page {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    min-height: 100%;
+    box-sizing: border-box;
+}
+.lca-tab-page-main {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+.lca-tab-page-main > .card {
+    flex: 1 1 auto;
+    min-height: 0;
+}
+.lca-tab-page--content .lca-tab-page-main {
+    flex: 0 1 auto;
+}
+.lca-tab-page--content .lca-tab-page-main > .card {
+    flex: 0 1 auto;
+}
+#main_tabs ~ .tab-content > .tab-pane.active {
+    overflow-y: auto;
+}
+.lca-partner-footer {
+    flex-shrink: 0;
+    margin-top: 1.25rem;
+    padding: 0.85rem 1.25rem 1rem;
+    border-top: 1px solid #dee2e6;
+    background: #f1f3f5;
+}
+.lca-partner-footer-logos {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    align-items: center;
+    gap: 1.25rem 2rem;
+}
+.lca-partner-logo-link {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 5.5rem;
+    min-height: 3rem;
+    padding: 0.35rem 0.65rem;
+    border-radius: 10px;
+    background: transparent;
+    text-decoration: none;
+    cursor: pointer;
+    filter: grayscale(100%);
+    opacity: 0.68;
+    transform: perspective(600px) translateY(0) scale(1);
+    transition:
+        filter 0.28s ease,
+        opacity 0.28s ease,
+        transform 0.28s ease,
+        box-shadow 0.28s ease;
+    box-shadow: 0 2px 4px rgba(15, 23, 42, 0);
+}
+.lca-partner-logo-link:hover,
+.lca-partner-logo-link:focus {
+    filter: grayscale(0%);
+    opacity: 1;
+    transform: perspective(600px) translateY(-4px) scale(1.07);
+    box-shadow: 0 10px 22px rgba(15, 23, 42, 0.16);
+    outline: none;
+}
+.lca-partner-logo-link:active {
+    transform: perspective(600px) translateY(-1px) scale(1.03);
+    box-shadow: 0 6px 14px rgba(15, 23, 42, 0.12);
+}
+.lca-partner-logo-img {
+    display: block;
+    max-height: 2.65rem;
+    max-width: 8.5rem;
+    width: auto;
+    height: auto;
+    object-fit: contain;
+    pointer-events: none;
 }
 """
 
@@ -1156,7 +1307,7 @@ def _chart_download_buttons(plot_output_id: str) -> ui.Tag:
     return ui.div(
         ui.download_button(
             f"{plot_output_id}_download_pdf",
-            "Download PDF",
+            "Download",
             class_="btn btn-sm btn-outline-secondary",
         ),
         class_="lca-chart-download-toolbar",
@@ -1194,7 +1345,7 @@ def _table_download_buttons(table_output_id: str) -> ui.Tag:
     return ui.div(
         ui.download_button(
             f"{table_output_id}_download_csv",
-            "CSV",
+            "Download",
             class_="btn btn-sm btn-outline-secondary",
         ),
         class_="lca-chart-download-toolbar",
@@ -1958,14 +2109,14 @@ def _radar_figure_layout(
     if n_legend_items <= 6:
         return (
             layout.single_height,
-            dict(l=80, r=80, t=40, b=72),
-            _legend_bottom(y=-0.14),
+            dict(l=80, r=80, t=40, b=50),
+            _legend_bottom(y=-0.08),
         )
 
     legend_margin_px = min(300, 120 + n_legend_items * 5)
     legend_content_px = n_legend_items * 15
     height = max(layout.single_height, legend_content_px + 120)
-    margin = dict(l=80, r=legend_margin_px, t=40, b=52)
+    margin = dict(l=80, r=legend_margin_px, t=40, b=40)
     legend = dict(
         orientation="v",
         yanchor="middle",
@@ -2937,26 +3088,6 @@ def _norm_chart_labels(method: str) -> tuple[str, str]:
     return ("", BAR_Y_LABEL_NORMALIZED)
 
 
-def _radar_chart_title_text(norm_method: str) -> str:
-    if norm_method == NORM_METHOD_RAW:
-        return "Environmental profile"
-    return "Per-impact normalized environmental profile"
-
-
-def _radar_bottom_title_annotation(title_text: str) -> dict:
-    return dict(
-        text=title_text,
-        xref="paper",
-        yref="paper",
-        x=0.5,
-        y=0.04,
-        xanchor="center",
-        yanchor="top",
-        showarrow=False,
-        font=dict(size=13, color="#333"),
-    )
-
-
 def _build_normalized_data_table(
     data: pd.DataFrame,
     impact_col: str,
@@ -3075,7 +3206,6 @@ def build_radar_figure(
 
     if norm_method == NORM_METHOD_RAW:
         plot_values = raw_display
-        title_text = _radar_chart_title_text(norm_method)
         radialaxis = dict(
             visible=True,
             range=_polar_axis_range(
@@ -3092,7 +3222,6 @@ def build_radar_figure(
             method=NORM_METHOD_ABS_MAX,
             fiber_cols=fiber_cols,
         )
-        title_text = _radar_chart_title_text(norm_method)
         radialaxis = dict(
             visible=True,
             range=[-1.0, 1.0],
@@ -3154,7 +3283,6 @@ def build_radar_figure(
     )
     fig.update_layout(
         title=None,
-        annotations=[_radar_bottom_title_annotation(title_text)],
         height=height,
         autosize=True,
         margin=margin,
@@ -3415,7 +3543,6 @@ def _home_page_css() -> str:
 .lca-home-lead {{
     color: #495057;
     font-size: 0.95rem;
-    max-width: 52rem;
     margin-bottom: 1.25rem;
 }}
 .lca-home-layout {{
@@ -3597,7 +3724,7 @@ def _home_page_ui() -> ui.Tag:
                 ),
                 _home_nav_card(
                     button_id="home_nav_method",
-                    title="Method",
+                    title="Methods",
                     description="Documentation on data sources and analysis methods.",
                     top_row=True,
                 ),
@@ -3623,27 +3750,102 @@ def _home_page_ui() -> ui.Tag:
 def _home_nav_panel() -> ui.Tag:
     return ui.nav_panel(
         "Home",
-        ui.card(
-            ui.card_header("Home"),
-            _home_page_ui(),
-            full_screen=True,
+        _with_partner_footer(
+            ui.card(
+                _home_page_ui(),
+                full_screen=False,
+            ),
+            content_height=True,
         ),
         value=TAB_HOME,
     )
 
 
+METHOD_PHASE_CARDS: tuple[dict[str, str], ...] = (
+    {"title": "Goals and Scope", "subtitle": "Image and text TBA"},
+    {"title": "LCI"},
+    {"title": "LCIA"},
+    {"title": "Interpretation"},
+)
+
+
+def _method_page_css() -> str:
+    return """
+.lca-method-page {
+    padding: 1.25rem 1.5rem 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.15rem;
+}
+.lca-method-card {
+    width: 100%;
+    border: 1px solid #c5d9fc;
+    border-radius: 12px;
+    background: radial-gradient(
+        ellipse 130% 120% at 50% 12%,
+        #f7faff 0%,
+        #edf3ff 40%,
+        #e2ebff 100%
+    );
+    padding: 1.1rem 1.15rem 1.15rem;
+    box-shadow: 0 1px 4px rgba(13, 110, 253, 0.07);
+}
+.lca-method-card-title {
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: #1a2b42;
+    margin: 0 0 0.85rem 0;
+    line-height: 1.3;
+}
+.lca-method-card-subtitle {
+    font-size: 0.78rem;
+    font-weight: 500;
+    color: #6c757d;
+    margin: -0.55rem 0 0.75rem 0;
+    line-height: 1.35;
+}
+.lca-method-card-body {
+    font-size: 0.84rem;
+    color: #6c757d;
+    line-height: 1.45;
+    margin: 0;
+}
+"""
+
+
+def _method_card_ui(card: dict[str, str]) -> ui.Tag:
+    subtitle = card.get("subtitle")
+    header_children: list[ui.Tag] = [
+        ui.tags.h5(str(card["title"]), class_="lca-method-card-title"),
+    ]
+    if subtitle:
+        header_children.append(
+            ui.tags.p(str(subtitle), class_="lca-method-card-subtitle"),
+        )
+    return ui.tags.div(
+        *header_children,
+        ui.tags.p("Info will be added soon.", class_="lca-method-card-body"),
+        class_="lca-method-card",
+    )
+
+
+def _method_page_ui() -> ui.Tag:
+    return ui.div(
+        *[_method_card_ui(card) for card in METHOD_PHASE_CARDS],
+        class_="lca-method-page",
+    )
+
+
 def _method_nav_panel() -> ui.Tag:
     return ui.nav_panel(
-        "Method",
-        ui.card(
-            ui.card_header("Method"),
-            ui.div(
-                ui.tags.p(
-                    "Info will be added soon.",
-                    class_="text-muted px-3 py-3 mb-0",
-                ),
+        "Methods",
+        _with_partner_footer(
+            ui.card(
+                _method_page_ui(),
+                class_="lca-method-card-shell",
+                full_screen=False,
             ),
-            full_screen=True,
+            content_height=True,
         ),
         value=TAB_METHOD,
     )
@@ -3787,35 +3989,79 @@ def _logo_data_uri(filename: str) -> str:
     return f"data:{mime};base64,{encoded}"
 
 
-def _team_member_line_text(member: _TEAM_MEMBER) -> str:
+def _org_logo_link_ui(
+    org: _TEAM_ORG_INFO,
+    *,
+    link_class: str,
+    img_class: str,
+) -> ui.Tag:
+    return ui.tags.a(
+        ui.tags.img(
+            src=_logo_data_uri(str(org["logo"])),
+            alt=str(org["name"]),
+            class_=img_class,
+        ),
+        href=str(org["website"]),
+        target="_blank",
+        rel="noopener noreferrer",
+        class_=link_class,
+        title=str(org["name"]),
+        **{"aria-label": f"Visit {org['name']} website (opens in new tab)"},
+    )
+
+
+def _team_logo_link_ui(org: _TEAM_ORG_INFO) -> ui.Tag:
+    return _org_logo_link_ui(
+        org,
+        link_class="lca-team-logo-link",
+        img_class="lca-team-logo-img",
+    )
+
+
+def _partner_footer_ui() -> ui.Tag:
+    return ui.tags.footer(
+        ui.div(
+            *[
+                _org_logo_link_ui(
+                    TEAM_ORG_REGISTRY[org_id],
+                    link_class="lca-partner-logo-link",
+                    img_class="lca-partner-logo-img",
+                )
+                for org_id in PARTNER_ORG_ORDER
+            ],
+            class_="lca-partner-footer-logos",
+        ),
+        class_="lca-partner-footer",
+        **{"aria-label": "Project partners"},
+    )
+
+
+def _with_partner_footer(main: ui.Tag, *, content_height: bool = False) -> ui.Tag:
+    """Place partner logos after tab content in normal document flow."""
+    page_class = "lca-tab-page"
+    if content_height:
+        page_class += " lca-tab-page--content"
+    return ui.div(
+        ui.div(main, class_="lca-tab-page-main"),
+        _partner_footer_ui(),
+        class_=page_class,
+    )
+
+
+def _team_member_line_ui(member: _TEAM_MEMBER) -> ui.Tag:
     name = str(member["name"])
     role = member.get("role")
     contributions = member.get("contributions")
+    name_el = ui.tags.strong(name)
     if role and contributions:
         if isinstance(contributions, list):
             contrib_text = ", ".join(str(item) for item in contributions)
         else:
             contrib_text = str(contributions)
-        return f"{name}: {role}, {contrib_text}"
+        return ui.tags.li(name_el, f": {role}, {contrib_text}")
     if role:
-        return f"{name}: {role}"
-    return name
-
-
-def _team_logo_link_ui(org: _TEAM_ORG_INFO) -> ui.Tag:
-    return ui.tags.a(
-        ui.tags.img(
-            src=_logo_data_uri(str(org["logo"])),
-            alt=str(org["name"]),
-            class_="lca-team-logo-img",
-        ),
-        href=str(org["website"]),
-        target="_blank",
-        rel="noopener noreferrer",
-        class_="lca-team-logo-link",
-        title=str(org["name"]),
-        **{"aria-label": f"Visit {org['name']} website (opens in new tab)"},
-    )
+        return ui.tags.li(name_el, f": {role}")
+    return ui.tags.li(name_el)
 
 
 def _team_org_subcard_ui(org_group: _TEAM_ORG_GROUP) -> ui.Tag:
@@ -3826,10 +4072,7 @@ def _team_org_subcard_ui(org_group: _TEAM_ORG_GROUP) -> ui.Tag:
     return ui.tags.div(
         _team_logo_link_ui(org),
         ui.tags.ul(
-            *[
-                ui.tags.li(_team_member_line_text(member))
-                for member in member_list
-            ],
+            *[_team_member_line_ui(member) for member in member_list],
             class_="lca-team-member-list",
         ),
         class_="lca-team-org-subcard",
@@ -3857,9 +4100,10 @@ def _team_page_ui() -> ui.Tag:
         *[_team_function_card_ui(area) for area in TEAM_FUNCTION_AREAS],
         ui.div(
             ui.tags.p(
-                "This project was supported through collaboration with the "
-                "NC State University, Textile Innovation Engine, Walmart "
-                "Foundation, and the National Laboratory of the Rockies.",
+                "This project was supported by a collaboration between the "
+                "Walmart Foundation, the Wilson College of Textiles at NC "
+                "State University, the National Laboratory of the Rockies, "
+                "and The Textile Innovation Engine.",
                 class_="lca-team-ack",
             ),
             class_="lca-team-ack-section",
@@ -3871,12 +4115,35 @@ def _team_page_ui() -> ui.Tag:
 def _team_nav_panel() -> ui.Tag:
     return ui.nav_panel(
         "Team & Contributions",
-        ui.card(
-            ui.card_header("Team & Contributions"),
-            _team_page_ui(),
-            class_="lca-team-card",
+        _with_partner_footer(
+            ui.card(
+                ui.card_header("We would like to thank the Walmart Foundation for its financial support of this project."),
+                _team_page_ui(),
+                class_="lca-team-card",
+                full_screen=False,
+            ),
+            content_height=True,
         ),
         value=TAB_TEAM,
+    )
+
+
+def _references_nav_panel() -> ui.Tag:
+    return ui.nav_panel(
+        "References",
+        _with_partner_footer(
+            ui.card(
+                ui.div(
+                    ui.tags.p(
+                        "Info will be added soon.",
+                        class_="text-muted px-3 py-3 mb-0",
+                    ),
+                ),
+                full_screen=False,
+            ),
+            content_height=True,
+        ),
+        value=TAB_REFERENCES,
     )
 
 
@@ -3885,12 +4152,13 @@ def _section_nav_panel(section_key: str) -> ui.Tag:
     title = str(spec["tab"])
     return ui.nav_panel(
         title,
-        ui.card(
-            ui.card_header(title),
-            ui.output_ui(f"section_note_{section_key}"),
-            ui.output_ui(f"section_toolbar_{section_key}"),
-            _chart_plot_output(f"section_plot_{section_key}"),
-            full_screen=True,
+        _with_partner_footer(
+            ui.card(
+                ui.output_ui(f"section_note_{section_key}"),
+                ui.output_ui(f"section_toolbar_{section_key}"),
+                _chart_plot_output(f"section_plot_{section_key}"),
+                full_screen=True,
+            ),
         ),
         value=section_key,
     )
@@ -4839,9 +5107,12 @@ app_ui = ui.page_sidebar(
             _CHECKBOX_PANEL_CSS
             + _section_tab_nav_css()
             + _apply_button_css()
+            + _sidebar_note_css()
             + _app_title_css()
+            + _partner_footer_css()
             + _plot_card_css()
             + _home_page_css()
+            + _method_page_css()
             + _team_page_css()
         ),
         _checkbox_dropdown_panel(
@@ -4868,6 +5139,7 @@ app_ui = ui.page_sidebar(
             "Apply",
             class_="lca-apply-btn",
         ),
+        _sidebar_methods_note_ui(),
         ui.tags.script("""
 (function () {
   function flushPicker(details) {
@@ -4913,35 +5185,41 @@ app_ui = ui.page_sidebar(
         _home_nav_panel(),
         ui.nav_panel(
             "Comparision Table",
-            ui.card(
-                ui.card_header(
-                    "Comparison Table - FU=100kg"
+            _with_partner_footer(
+                ui.card(
+                    _comparison_table_section("Raw data", "data_tab_raw"),
+                    _comparison_table_section(
+                        "Normalized data", "data_tab_normalized"
+                    ),
+                    full_screen=True,
                 ),
-                _comparison_table_section("Raw data", "data_tab_raw"),
-                _comparison_table_section("Normalized data", "data_tab_normalized"),
-                full_screen=True,
             ),
             value=TAB_COMPARISON,
         ),
         ui.nav_panel(
             "All Potential Impact Factors",
-            ui.card(
-                ui.card_header("All Potential Impact Factors"),
-                ui.input_select(
-                    "chart_kind_all",
-                    "Chart type",
-                    choices=_all_impacts_chart_kind_choices(),
-                    selected="radar",
+            _with_partner_footer(
+                ui.card(
+                    ui.input_select(
+                        "chart_kind_all",
+                        "Chart type",
+                        choices=_all_impacts_chart_kind_choices(),
+                        selected="radar",
+                    ),
+                    ui.output_ui("all_impacts_toolbar"),
+                    _chart_plot_output("all_impacts_plot"),
+                    full_screen=True,
                 ),
-                ui.output_ui("all_impacts_toolbar"),
-                _chart_plot_output("all_impacts_plot"),
-                full_screen=True,
             ),
             value=TAB_ALL_IMPACTS,
         ),
-        *[_section_nav_panel(section_key) for section_key in IMPACT_SECTIONS],
+        *[
+            _section_nav_panel(section_key)
+            for section_key in IMPACT_SECTIONS
+        ],
         _method_nav_panel(),
         _team_nav_panel(),
+        _references_nav_panel(),
         id="main_tabs",
     ),
     title=ui.input_action_button(
@@ -5608,6 +5886,7 @@ def server(input, output, session):
 
     _HOME_NAV_BUTTONS: dict[str, str] = {
         "nav_home_title": TAB_HOME,
+        "nav_method_sidebar": TAB_METHOD,
         "home_nav_comparison_table": TAB_COMPARISON,
         "home_nav_all_impacts": TAB_ALL_IMPACTS,
         "home_nav_method": TAB_METHOD,
