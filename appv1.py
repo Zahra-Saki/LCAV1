@@ -475,10 +475,10 @@ TEAM_ORG_REGISTRY: dict[str, _TEAM_ORG_INFO] = {
 }
 
 PARTNER_ORG_ORDER: tuple[str, ...] = (
-    "nc_state",
-    "textile_engine",
     "walmart",
+    "nc_state",
     "nlr",
+    "textile_engine",
 )
 
 TEAM_FUNCTION_AREAS: tuple[_TEAM_FUNCTION_AREA, ...] = (
@@ -533,6 +533,30 @@ TEAM_FUNCTION_AREAS: tuple[_TEAM_FUNCTION_AREA, ...] = (
                         "role": "Graduate Student",
                         "contributions": (
                             "Data visualization and website development"
+                        ),
+                    },
+                ],
+            },
+        ],
+    },
+    {
+        "title": "Liaisons between the research team and the NCTISE ecosystem",
+        "orgs": [
+            {
+                "org_id": "textile_engine",
+                "members": [
+                    {
+                        "name": "Melissa Sharp",
+                        "role": "Co-PI",
+                        "contributions": (
+                            "Deputy CEO - research and development of NCTISE "
+                        ),
+                    },
+                    {
+                        "name": "Anne Wiper",
+                        "role": "CEO of NCTISE",
+                        "contributions": (
+                            ""
                         ),
                     },
                 ],
@@ -716,7 +740,7 @@ def _sidebar_methods_note_ui() -> ui.Tag:
     return ui.div(
         ui.tags.p(
             ui.tags.span(
-                "To make validated consumer claims about these materials, you "
+                "Disclaimer: To make validated consumer claims about these materials, you "
                 "must follow the exact production, cultivation, and processing "
             ),
             ui.input_action_link(
@@ -5887,6 +5911,7 @@ def server(input, output, session):
     _HOME_NAV_BUTTONS: dict[str, str] = {
         "nav_home_title": TAB_HOME,
         "nav_method_sidebar": TAB_METHOD,
+        "nav_method_home_lead": TAB_METHOD,
         "home_nav_comparison_table": TAB_COMPARISON,
         "home_nav_all_impacts": TAB_ALL_IMPACTS,
         "home_nav_method": TAB_METHOD,
