@@ -3725,20 +3725,30 @@ def _home_page_ui() -> ui.Tag:
         ),
         ui.tags.p(
             "Through the results achieved using Life Cycle Assessment (LCA) "
-            "frameworks and methodologies, users can compare selected fibers "
-            "and access reliable impact data. The scope of each raw material "
-            "analysis runs from cultivation or extraction to fiber production "
-            "ready for yarn spinning (cradle-to-gate) and is based on 100 kg "
-            "of raw material. The analysis leverages data from Sphera, ecoinvent, "
-            "and peer-reviewed literature to enable data-driven results.",
+                "frameworks and methodologies, users can compare selected fibers "
+                "and access reliable impact data. The scope of each raw material "
+                "analysis runs from cultivation or extraction to fiber production "
+                "ready for yarn spinning (cradle-to-gate) and is based on 100 kg of "
+                "raw material. The analysis leverages data from Sphera, ecoinvent, "
+                "and peer-reviewed literature to enable data-driven results.",
             class_="lca-home-lead",
         ),
         ui.tags.p(
-            "This information is intended to be used to compare the environmental "
-            "impacts of raw fiber materials under the modeling assumptions described "
-            "in the methodology page. It is not intended to be used to communicate "
-            "validated product-specific or company-specific green marketing claims. ",
-            class_="lca-home-lead",
+            ui.tags.span(                
+                "This information is intended to be used to compare the environmental "
+                "impacts of raw fiber materials under the modeling assumptions described"
+                "in the "
+            ),
+            ui.input_action_link(
+                "nav_method_sidebar",
+                "methodology",
+                class_="lca-sidebar-method-link",
+            ),           
+            ui.tags.span(
+                " page. It is not intended to be used to communicate"
+                "validated product-specific  or company-specific green marketing claims."),
+            class_="lca-home-lead",  
+            
         ),
         ui.div(
             ui.div(
@@ -3775,10 +3785,8 @@ def _home_page_ui() -> ui.Tag:
             ),
             class_="lca-home-layout",
         ),
-        class_="lca-home-page",
+    class_="lca-home-page",
     )
-
-
 def _home_nav_panel() -> ui.Tag:
     return ui.nav_panel(
         "Home",
