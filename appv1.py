@@ -739,17 +739,21 @@ def _sidebar_note_css() -> str:
 def _sidebar_methods_note_ui() -> ui.Tag:
     return ui.div(
         ui.tags.p(
-            ui.tags.span(
-                "Disclaimer: To make validated consumer claims about these materials, you "
-                "must follow the exact production, cultivation, and processing "
+            ui.tags.span(                
+                "This information is intended to be used to compare the environmental "
+                "impacts of raw fiber materials under the modeling assumptions described"
+                "in the "
             ),
             ui.input_action_link(
                 "nav_method_sidebar",
-                "methods",
+                "methodology",
                 class_="lca-sidebar-method-link",
-            ),
-            ui.tags.span(" described."),
-            class_="lca-sidebar-note",
+            ),           
+            ui.tags.span(
+                " page. It is not intended to be used to communicate"
+                "validated product-specific  or company-specific green marketing claims."),
+            class_="lca-sidebar-note",  
+            
         ),
         class_="lca-sidebar-note-wrap",
     )
@@ -3714,22 +3718,26 @@ def _home_nav_group(
 def _home_page_ui() -> ui.Tag:
     return ui.div(
         ui.tags.p(
-            "This tool was designed to provide a comparison of select potential "
-            "environmental impacts using Life Cycle Assessment frameworks and "
-            "methodologies to compare selected fibers used in textile products. "
-            "The information enables access to reliable data regarding these "
-            "impacts. It is hoped that using this tool, designers, product "
-            "developers and sourcing professionals can make informed decisions "
-            "regarding raw materials selection.",
+            "This website provides designers, product developers, and sourcing " 
+            "professionals with a tool to evaluate the environmental footprint "
+            "of common textile fibers.",
             class_="lca-home-lead",
         ),
         ui.tags.p(
-            "In addition, the information can aid industry professionals in "
-            "understanding their environmental footprint based on raw material "
-            "production/cultivation processes. Unless one uses the specific "
-            "production/cultivation and processing methods described, it is not "
-            "intended to be used to communicate validated claims about those "
-            "materials to consumers.",
+            "Through the results achieved using Life Cycle Assessment (LCA) "
+            "frameworks and methodologies, users can compare selected fibers "
+            "and access reliable impact data. The scope of each raw material "
+            "analysis runs from cultivation or extraction to fiber production "
+            "ready for yarn spinning (cradle-to-gate) and is based on 100 kg "
+            "of raw material. The analysis leverages data from Sphera, ecoinvent, "
+            "and peer-reviewed literature to enable data-driven results.",
+            class_="lca-home-lead",
+        ),
+        ui.tags.p(
+            "This information is intended to be used to compare the environmental "
+            "impacts of raw fiber materials under the modeling assumptions described "
+            "in the methodology page. It is not intended to be used to communicate "
+            "validated product-specific or company-specific green marketing claims. ",
             class_="lca-home-lead",
         ),
         ui.div(
