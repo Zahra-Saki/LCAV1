@@ -508,9 +508,13 @@ TEAM_FUNCTION_AREAS: tuple[_TEAM_FUNCTION_AREA, ...] = (
             {
                 "org_id": "nlr",
                 "members": [
-                    {"name": "Katrina Kanuar"},
-                    {"name": "Elisabeth Van Roijen"},
-                    {"name": "Taylor Urkert"},
+                    {"name": "Dr. Katrina Kanuar"},
+                    {"name": "Dr. Elisabeth Van Roijen"},
+                    {
+                        "name": "Dr. Taylor Uekert",
+                        "role": "Senior Researcher", 
+                        "contributions": "LCA review",
+                        },
                 ],
             },
         ],
