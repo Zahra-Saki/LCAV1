@@ -1,11 +1,11 @@
-Impact categories,Units,Virgin Polyester,Mechanically Recycled Polyester,Enzymatically  Recycled Polyester,Chemically Recycled Polyester,Nylon 6,"Nylon 6,6",Recycled Nylon,Hemp,Marino Wool,Spandex,Conventional Cotton,Organic Cotton,Mechanically Recycled Cotton,Chemically Recycled Cotton,Enzymatically Recycled Cotton,Viscose,Recycled Viscose,PLA,Silk,Jute,Kenaf,PHB,Recycled Nylon
-Climate change,kg CO2 eq,292,107,171,223,710,977,656,37.4,2.13E+03,447,169,109,19.6,392,561,350,347,266,6440,194,147,332,656
-Climate change incl biogenic carbon,kg CO2 eq,62.833,-122.167,-58.167,-6.167,476.372,743.372,451.7,-125.563,1.95E+03,245.33,6.037,-53.963,-143.363,229.037,398.037,187.037,184.037,82.67,6256.67,31.037,-15.963,128,451.7
-Fossil depletion,kg oil eq,176,14.9,81.4,137,317,391,179,24.3,187,233,34.7,13.4,7.54,135,214,138,119,93,784,41.7,22.9,111,179
-freshwater consumption,m3,1.51,0.322,10.9,27.7,1.52,3.3,2.18,27.3,7.70E+01,2.48,141,18.2,0.125,10.4,15,2.31,10.1,3.56,3100,153,161,5.31,2.18
-Human toxicity - noncancer,"kg 1,4 DB eq",27.8,4.74E+00,10.6,26.2,38.9,59.6,14.9,4.36,-176,36.9,586,11.8,0.416,18,59.9,7020,27.4,5.12,5130,8.01,5.64,137,14.9
-Freshwater ecotoxicity,"kg 1,4 DB eq",0.0792,9.40E-03,0.00359,8.44E-02,0.133,0.185,0.0545,0.013,1.53,0.13,0.988,0.051,0.00128,0.0681,0.257,3.72E+00,9.28E-02,9.09E-01,36.3,2.25E-02,4.39E-02,6.30E-01,0.0545
-Freshwater eutrophication,kg P eq,9.48E-04,0.000138,0.000683,1.29E-03,8.52E-04,1.11E-03,0.000685,8.27E-03,0.0659,2.20E-03,0.0693,1.03E-02,2.90E-05,7.81E-04,2.87E-03,2.79E-03,7.12E-04,1.47E-03,2.67E+00,1.33E-04,9.28E-02,8.97E-03,0.000685
-Human toxicity - Cancer,"kg 1,4 DB eq",3.48,0.113,0.955,2.94,4.89,7.64,1.42,0.511,3.4,2.8,0.664,0.433,0.0262,0.844,2.39,0.852,2.4,38.6,40.6,0.948,0.605,1.57,1.42
-Acidification,kg SO2 eq,0.272,0.0686,0.153,0.195,0.73,1.14,0.661,1.62,8.37,0.391,2.48,0.509,0.0149,1.67,2.02,21.4,2.11,0.561,129,1.15,3.03,2.12,0.661
-Land Use,Annual crop eq/year,3.88,4.51,5.41,1.96,8.33,7.04,8.1,1.76,4.45E+03,14.2,1240,2130,0.412,29,123,209,8.26,173,6690,864,1040,494,8.1
+Impact categories,Units,Virgin Polyester,Mechanically Recycled Polyester,Enzymatically  Recycled Polyester,Chemically Recycled Polyester,Nylon 6,"Nylon 6,6",Recycled Nylon,Hemp,Marino Wool,Spandex,Conventional Cotton,Organic Cotton,Mechanically Recycled Cotton,Chemically Recycled Cotton,Enzymatically Recycled Cotton,Viscose,Recycled Viscose,PLA,Silk,Jute,Kenaf,PHB
+Climate change,kg CO2 eq,292,107,171,223,710,977,656,37.4,2.13E+03,447,169,109,19.6,392,561,350,347,266,6440,194,147,332
+Climate change incl biogenic carbon,kg CO2 eq,62.833,-122.167,-58.167,-6.167,476.372,743.372,451.7,-125.563,1.95E+03,245.33,6.037,-53.963,-143.363,229.037,398.037,187.037,184.037,82.67,6256.67,31.037,-15.963,128
+Fossil depletion,kg oil eq,176,14.9,81.4,137,317,391,179,24.3,187,233,34.7,13.4,7.54,135,214,138,119,93,784,41.7,22.9,111
+freshwater consumption,m3,1.51,0.322,10.9,27.7,1.52,3.3,2.18,27.3,7.70E+01,2.48,141,18.2,0.125,10.4,15,2.31,10.1,3.56,3100,153,161,5.31
+Human toxicity - noncancer,"kg 1,4 DB eq",27.8,4.74E+00,10.6,26.2,38.9,59.6,14.9,4.36,-176,36.9,586,11.8,0.416,18,59.9,7020,27.4,5.12,5130,8.01,5.64,137
+Freshwater ecotoxicity,"kg 1,4 DB eq",0.0792,9.40E-03,0.00359,8.44E-02,0.133,0.185,0.0545,0.013,1.53,0.13,0.988,0.051,0.00128,0.0681,0.257,3.72E+00,9.28E-02,9.09E-01,36.3,2.25E-02,4.39E-02,6.30E-01
+Freshwater eutrophication,kg P eq,9.48E-04,0.000138,0.000683,1.29E-03,8.52E-04,1.11E-03,0.000685,8.27E-03,0.0659,2.20E-03,0.0693,1.03E-02,2.90E-05,7.81E-04,2.87E-03,2.79E-03,7.12E-04,1.47E-03,2.67E+00,1.33E-04,9.28E-02,8.97E-03
+Human toxicity - Cancer,"kg 1,4 DB eq",3.48,0.113,0.955,2.94,4.89,7.64,1.42,0.511,3.4,2.8,0.664,0.433,0.0262,0.844,2.39,0.852,2.4,38.6,40.6,0.948,0.605,1.57
+Acidification,kg SO2 eq,0.272,0.0686,0.153,0.195,0.73,1.14,0.661,1.62,8.37,0.391,2.48,0.509,0.0149,1.67,2.02,21.4,2.11,0.561,129,1.15,3.03,2.12
+Land Use,Annual crop eq/year,3.88,4.51,5.41,1.96,8.33,7.04,8.1,1.76,4.45E+03,14.2,1240,2130,0.412,29,123,209,8.26,173,6690,864,1040,494
