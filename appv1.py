@@ -8,6 +8,7 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import plotly.express as px
@@ -23,7 +24,11 @@ DATA_FILE = Path(os.getcwd()) / "Dataset" / "processed" / "processed-data.csv"
 
 CHARTS_PER_ROW = 2
 PIE_HOLE = 0.4
-BAR_COLORS = px.colors.qualitative.Set2
+# Tableau 20 (matplotlib tab20): colorblind-friendlier categorical palette
+BAR_COLORS = [
+    f"#{int(r * 255):02x}{int(g * 255):02x}{int(b * 255):02x}"
+    for r, g, b in plt.get_cmap("tab20").colors
+]
 BAR_LABEL_MAX_LEN = 14
 _GROUPED_BAR_IMPACT_LABEL_FONT_SIZE = 10
 _GROUPED_BAR_IMPACT_LABEL_CHAR_PX = 5.8
@@ -44,11 +49,11 @@ MISSING_VALUE_COLOR = "#c0392b"
 HEATMAP_MISSING_CELL_FILL = "#ffffff"
 HEATMAP_MISSING_LINE_COLOR = "#aaaaaa"
 HEATMAP_DATA_COLORSCALE = [
-    [0.0, "#eff3ff"],
-    [0.25, "#bdd7e7"],
-    [0.5, "#6baed6"],
-    [0.75, "#3182bd"],
-    [1.0, "#08519c"],
+    [0.0, "#fff5f5"],
+    [0.25, "#ffc2c2"],
+    [0.5, "#ff6666"],
+    [0.75, "#CC0000"],
+    [1.0, "#990000"],
 ]
 DATA_POLL_SECONDS = 10
 SELECTION_DEBOUNCE_SECONDS = 0.4
@@ -59,6 +64,28 @@ NORM_METHOD_PER_IMPACT = NORM_METHOD_ABS_MAX
 NORM_METHOD_CHOICES = {
     NORM_METHOD_RAW: "Raw data",
     NORM_METHOD_ABS_MAX: "Normalized data",
+}
+
+# ---------------------------------------------------------------------------
+# Fiber info links (Comparison Table column headers)
+# ---------------------------------------------------------------------------
+# Developers: put a URL for each fiber below to make its info icon open that
+# page in a new browser tab. Leave the value empty (or omit the fiber) to keep
+# the icon visible but not clickable.
+# New fibers added to the dataset automatically get an info icon beside their
+# name in both Raw data and Normalized data tables; add a URL entry here when
+# that fiber's page is ready.
+#
+# Example:
+#   "Virgin PET": "https://example.com/fibers/virgin-pet",
+#   "Mechanical rPET": "https://example.com/fibers/mechanical-rpet",
+FIBER_INFO_URLS: dict[str, str] = {
+    "Virgin PET": "https://lca.textiles.ncsu.edu",
+    # "Mechanical rPET": "",
+    # "Enzymatic rPET": "",
+    # "Chemical rPET": "",
+    # "Nylon 6": "",
+    # "Nylon 6,6": "",
 }
 
 
@@ -182,6 +209,16 @@ _TABLE_ICON_SVG = """
 
 _GUIDE_ICON_SVG = """
 <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24"
+  fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+  stroke-linejoin="round" aria-hidden="true">
+  <circle cx="12" cy="12" r="10"/>
+  <path d="M12 11v5"/>
+  <circle cx="12" cy="7.5" r="0.5" fill="currentColor"/>
+</svg>
+"""
+
+_FIBER_INFO_ICON_SVG = """
+<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"
   fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
   stroke-linejoin="round" aria-hidden="true">
   <circle cx="12" cy="12" r="10"/>
@@ -600,79 +637,84 @@ def _norm_radio_ids() -> tuple[str, ...]:
 
 # ── UI styles (shared gradients) ─────────────────────────────────────────────
 
+# NC State Wolfpack Red
+NCSU_RED = "#CC0000"
+NCSU_RED_DARK = "#990000"
+
+
 _GRADIENT_TAB_DEFAULT = (
     "radial-gradient(ellipse 120% 100% at 50% 30%, "
-    "#f8fbff 0%, #e7f1ff 38%, #cfe2ff 72%, #b8d4fe 100%)"
+    "#fff5f5 0%, #ffe0e0 38%, #ffc2c2 72%, #ff9999 100%)"
 )
 _GRADIENT_TAB_HOVER = (
     "radial-gradient(ellipse 120% 100% at 50% 28%, "
-    "#ffffff 0%, #edf4ff 40%, #d7e9ff 100%)"
+    "#ffffff 0%, #ffe8e8 40%, #ffcccc 100%)"
 )
 _GRADIENT_TAB_ACTIVE = (
     "radial-gradient(ellipse 120% 100% at 50% 28%, "
-    "#4d9bff 0%, #0d6efd 38%, #0a58ca 72%, #084298 100%)"
+    f"#ff4d4d 0%, {NCSU_RED} 40%, #b30000 75%, {NCSU_RED_DARK} 100%)"
 )
 _GRADIENT_TAB_ACTIVE_HOVER = (
     "radial-gradient(ellipse 120% 100% at 50% 26%, "
-    "#5aa3ff 0%, #1a75ff 38%, #0b5ed7 72%, #084298 100%)"
+    f"#ff6666 0%, #e60000 35%, {NCSU_RED} 70%, {NCSU_RED_DARK} 100%)"
 )
 _GRADIENT_HOME_CARD = (
     "radial-gradient(ellipse 120% 110% at 50% 18%, "
-    "#ffffff 0%, #f8fbff 32%, #eef4ff 68%, #e3edff 100%)"
+    "#ffffff 0%, #fff5f5 32%, #fff0f0 68%, #ffe0e0 100%)"
 )
 _GRADIENT_HOME_CARD_HOVER = (
     "radial-gradient(ellipse 120% 110% at 50% 15%, "
-    "#ffffff 0%, #f3f8ff 30%, #e7f1ff 65%, #d7e9ff 100%)"
+    "#ffffff 0%, #fff2f2 30%, #ffe0e0 65%, #ffcccc 100%)"
 )
 _GRADIENT_HOME_GROUP = (
     "radial-gradient(ellipse 130% 120% at 50% 12%, "
-    "#f7faff 0%, #edf3ff 40%, #e2ebff 100%)"
+    "#fff5f5 0%, #ffe8e8 40%, #ffd6d6 100%)"
 )
 _GRADIENT_HOME_SUBCARD = (
     "radial-gradient(ellipse 115% 105% at 50% 20%, "
-    "#ffffff 0%, #fafcff 40%, #f0f6ff 100%)"
+    "#ffffff 0%, #fffafa 40%, #fff0f0 100%)"
 )
 _GRADIENT_HOME_SUBCARD_HOVER = (
     "radial-gradient(ellipse 115% 105% at 50% 15%, "
-    "#ffffff 0%, #f5f9ff 35%, #e8f2ff 100%)"
+    "#ffffff 0%, #fff5f5 35%, #ffe0e0 100%)"
 )
 _GRADIENT_SIDEBAR_HEADER = (
     "radial-gradient(ellipse 120% 110% at 50% 18%, "
-    "#ffffff 0%, #f8fbff 35%, #f0f6ff 72%, #e8f2ff 100%)"
+    "#ffffff 0%, #fff5f5 35%, #fff0f0 72%, #ffe0e0 100%)"
 )
 
 
 def _section_tab_nav_css() -> str:
-    """Fading blue pill background for all main nav tabs."""
+    """Fading red pill background for all main nav tabs."""
     base_sel = "#main_tabs .nav-link"
     active_sel = "#main_tabs .nav-link.active"
     return f"""
 {base_sel} {{
   background: {_GRADIENT_TAB_DEFAULT};
-  border: 1px solid #b6d4fe;
+  border: 1px solid #ff9999;
   border-radius: 0.5rem 0.5rem 0 0;
-  color: #0a58ca;
+  color: {NCSU_RED};
   font-weight: 600;
   padding: 0.45rem 0.95rem;
   margin-right: 0.25rem;
 }}
 {base_sel}:hover:not(.active) {{
   background: {_GRADIENT_TAB_HOVER};
-  color: #084298;
-  border-color: #9ec5fe;
+  color: {NCSU_RED_DARK};
+  border-color: #ff6666;
 }}
 {active_sel} {{
   background: {_GRADIENT_TAB_ACTIVE};
   color: #ffffff;
-  border-color: #084298;
+  border-color: {NCSU_RED_DARK};
   border-bottom-color: var(--bs-body-bg, #fff);
-  box-shadow: 0 2px 6px rgba(8, 66, 152, 0.22);
+  box-shadow: 0 2px 6px rgba(153, 0, 0, 0.22);
 }}
 {active_sel}:hover,
 {active_sel}:focus {{
   color: #ffffff;
   background: {_GRADIENT_TAB_ACTIVE_HOVER};
-  border-color: #084298;
+  border-color: #990000;
 }}
 """
 
@@ -684,18 +726,18 @@ def _apply_button_css() -> str:
   width: 100%;
   margin-top: 0.45rem;
   background: {_GRADIENT_TAB_DEFAULT};
-  border: 1px solid #b6d4fe;
+  border: 1px solid #ff9999;
   border-radius: 0.5rem;
-  color: #0a58ca;
+  color: {NCSU_RED};
   font-weight: 600;
   padding: 0.5rem 1rem;
 }}
 .lca-apply-btn.btn:hover,
 .lca-apply-btn.btn:focus {{
   background: {_GRADIENT_TAB_HOVER};
-  color: #084298;
-  border-color: #9ec5fe;
-  box-shadow: 0 0 0 0.12rem rgba(13, 110, 253, 0.2);
+  color: {NCSU_RED_DARK};
+  border-color: #ff6666;
+  box-shadow: 0 0 0 0.12rem rgba(204, 0, 0, 0.2);
 }}
 .lca-applied-hidden {{
   display: none !important;
@@ -704,39 +746,39 @@ def _apply_button_css() -> str:
 
 
 def _sidebar_note_css() -> str:
-    return """
-.lca-sidebar-note-wrap {
+    return f"""
+.lca-sidebar-note-wrap {{
     margin-top: 0.65rem;
-    padding: 0 0.35rem;
-    text-align: center;
-}
-.lca-sidebar-note {
+    padding: 0 0.15rem;
+    text-align: left;
+}}
+.lca-sidebar-note {{
     font-size: 0.78rem;
     line-height: 1.5;
     color: #495057;
-    margin: 0 auto;
-    max-width: 18rem;
-    text-align: center;
-}
-.lca-sidebar-note .lca-sidebar-method-link.action-link {
+    margin: 0;
+    max-width: none;
+    text-align: left;
+}}
+.lca-sidebar-note .lca-sidebar-method-link.action-link {{
     display: inline;
     padding: 0;
     margin: 0;
     border: none;
     background: transparent;
-    color: #0a58ca;
+    color: {NCSU_RED};
     font-size: inherit;
     font-weight: 600;
     text-decoration: underline;
     vertical-align: baseline;
     cursor: pointer;
-}
+}}
 .lca-sidebar-note .lca-sidebar-method-link.action-link:hover,
-.lca-sidebar-note .lca-sidebar-method-link.action-link:focus {
-    color: #084298;
+.lca-sidebar-note .lca-sidebar-method-link.action-link:focus {{
+    color: {NCSU_RED_DARK};
     background: transparent;
     box-shadow: none;
-}
+}}
 """
 
 
@@ -745,7 +787,7 @@ def _sidebar_methods_note_ui() -> ui.Tag:
         ui.tags.p(
             ui.tags.span(                
                 "This information is intended to be used to compare the environmental "
-                "impacts of raw fiber materials under the modeling assumptions described"
+                "impacts of raw fiber materials under the modeling assumptions described "
                 "in the "
             ),
             ui.input_action_link(
@@ -754,8 +796,9 @@ def _sidebar_methods_note_ui() -> ui.Tag:
                 class_="lca-sidebar-method-link",
             ),           
             ui.tags.span(
-                " page. It is not intended to be used to communicate"
-                "validated product-specific  or company-specific green marketing claims."),
+                " page. It is not intended to be used to communicate "
+                "validated product-specific or company-specific green marketing claims."
+            ),
             class_="lca-sidebar-note",  
             
         ),
@@ -765,9 +808,9 @@ def _sidebar_methods_note_ui() -> ui.Tag:
 
 def _app_title_css() -> str:
     """Navbar title styled as a plain link-like control."""
-    return """
-.navbar .lca-app-title-btn.btn {
-  color: #0a58ca !important;
+    return f"""
+.navbar .lca-app-title-btn.btn {{
+  color: {NCSU_RED} !important;
   font-size: 1.25rem;
   font-weight: 600;
   line-height: 1.2;
@@ -778,14 +821,14 @@ def _app_title_css() -> str:
   text-decoration: none;
   white-space: normal;
   text-align: left;
-}
+}}
 .navbar .lca-app-title-btn.btn:hover,
-.navbar .lca-app-title-btn.btn:focus {
-  color: #084298 !important;
+.navbar .lca-app-title-btn.btn:focus {{
+  color: {NCSU_RED_DARK} !important;
   text-decoration: underline;
   background: transparent !important;
   box-shadow: none !important;
-}
+}}
 """
 
 
@@ -3597,11 +3640,11 @@ def _home_page_css() -> str:
     height: 100%;
     text-align: left;
     white-space: normal;
-    border: 1px solid #cfe2ff;
+    border: 1px solid #ffc2c2;
     border-radius: 12px;
     background: {_GRADIENT_HOME_CARD};
     padding: 1.1rem 1.15rem;
-    box-shadow: 0 1px 3px rgba(13, 110, 253, 0.06);
+    box-shadow: 0 1px 3px rgba(204, 0, 0, 0.06);
     transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease, background 0.15s ease;
 }}
 .lca-home-top-card.btn {{
@@ -3611,8 +3654,8 @@ def _home_page_css() -> str:
 .lca-home-card.btn:hover,
 .lca-home-card.btn:focus {{
     transform: translateY(-2px);
-    border-color: #9ec5fe;
-    box-shadow: 0 8px 18px rgba(13, 110, 253, 0.14);
+    border-color: #ff6666;
+    box-shadow: 0 8px 18px rgba(204, 0, 0, 0.14);
     background: {_GRADIENT_HOME_CARD_HOVER};
     color: inherit;
 }}
@@ -3637,11 +3680,11 @@ def _home_page_css() -> str:
     line-height: 1.45;
 }}
 .lca-home-group {{
-    border: 1px solid #c5d9fc;
+    border: 1px solid #ffc2c2;
     border-radius: 12px;
     background: {_GRADIENT_HOME_GROUP};
     padding: 1.1rem 1.15rem 1.15rem;
-    box-shadow: 0 1px 4px rgba(13, 110, 253, 0.07);
+    box-shadow: 0 1px 4px rgba(204, 0, 0, 0.07);
 }}
 .lca-home-group-title {{
     font-size: 1.05rem;
@@ -3744,7 +3787,7 @@ def _home_page_ui() -> ui.Tag:
                 "in the "
             ),
             ui.input_action_link(
-                "nav_method_sidebar",
+                "nav_method_home",
                 "methodology",
                 class_="lca-sidebar-method-link",
             ),           
@@ -3823,16 +3866,16 @@ def _method_page_css() -> str:
 }
 .lca-method-card {
     width: 100%;
-    border: 1px solid #c5d9fc;
+    border: 1px solid #ffc2c2;
     border-radius: 12px;
     background: radial-gradient(
         ellipse 130% 120% at 50% 12%,
-        #f7faff 0%,
-        #edf3ff 40%,
-        #e2ebff 100%
+        #fff5f5 0%,
+        #ffe8e8 40%,
+        #ffd6d6 100%
     );
     padding: 1.1rem 1.15rem 1.15rem;
-    box-shadow: 0 1px 4px rgba(13, 110, 253, 0.07);
+    box-shadow: 0 1px 4px rgba(204, 0, 0, 0.07);
 }
 .lca-method-card-title {
     font-size: 1.05rem;
@@ -3904,16 +3947,16 @@ def _team_page_css() -> str:
     gap: 1.15rem;
 }
 .lca-team-function-card {
-    border: 1px solid #c5d9fc;
+    border: 1px solid #ffc2c2;
     border-radius: 12px;
     background: radial-gradient(
         ellipse 130% 120% at 50% 12%,
-        #f7faff 0%,
-        #edf3ff 40%,
-        #e2ebff 100%
+        #fff5f5 0%,
+        #ffe8e8 40%,
+        #ffd6d6 100%
     );
     padding: 1.1rem 1.15rem 1.15rem;
-    box-shadow: 0 1px 4px rgba(13, 110, 253, 0.07);
+    box-shadow: 0 1px 4px rgba(204, 0, 0, 0.07);
 }
 .lca-team-function-title {
     font-size: 1.05rem;
@@ -3948,7 +3991,7 @@ def _team_page_css() -> str:
     align-items: stretch;
     gap: 0.75rem;
     min-width: 0;
-    border: 1px solid #cfe2ff;
+    border: 1px solid #ffc2c2;
     border-radius: 10px;
     background: #ffffff;
     padding: 0.85rem 0.8rem 0.9rem;
@@ -4363,8 +4406,8 @@ _CHECKBOX_PANEL_CSS = ("""
     pointer-events: none;
 }
 .lca-checkbox-details[open] > summary {
-    border-color: #86b7fe;
-    box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.15);
+    border-color: #ff6666;
+    box-shadow: 0 0 0 0.2rem rgba(204, 0, 0, 0.15);
     margin-bottom: 0.35rem;
 }
 .lca-checkbox-dropdown-menu {
@@ -4428,7 +4471,7 @@ _CHECKBOX_PANEL_CSS = ("""
 .lca-checkbox-panel-title {
     font-size: 0.95rem;
     font-weight: 600;
-    color: #0a58ca;
+    color: #CC0000;
 }
 .lca-all-switch-wrap {
     display: inline-flex;
@@ -4460,11 +4503,11 @@ _CHECKBOX_PANEL_CSS = ("""
     float: none;
 }
 .lca-all-switch-wrap .form-check-input:checked {
-    background-color: #0d6efd;
-    border-color: #0d6efd;
+    background-color: #CC0000;
+    border-color: #CC0000;
 }
 .lca-all-switch-wrap .form-check-input:focus {
-    box-shadow: 0 0 0 0.12rem rgba(13, 110, 253, 0.25);
+    box-shadow: 0 0 0 0.12rem rgba(204, 0, 0, 0.25);
 }
 .lca-all-switch-wrap .form-check-label {
     font-size: 0.8rem;
@@ -4495,8 +4538,8 @@ _CHECKBOX_PANEL_CSS = ("""
     box-shadow: none;
 }
 .lca-select-card-body .selectize-control.single .selectize-input.focus {
-    border-color: #86b7fe;
-    box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.15);
+    border-color: #ff6666;
+    box-shadow: 0 0 0 0.2rem rgba(204, 0, 0, 0.15);
 }
 .lca-select-card-body .selectize-control.single .selectize-input:after {
     right: 0.75rem;
@@ -4515,17 +4558,17 @@ _CHECKBOX_PANEL_CSS = ("""
     gap: 0.35rem;
     padding: 0.35rem 0.85rem;
     border-radius: 999px;
-    border: 1px solid #0d6efd;
-    background: linear-gradient(180deg, #f8fbff 0%, #e8f2ff 100%);
-    color: #0a58ca;
+    border: 1px solid #CC0000;
+    background: linear-gradient(180deg, #fff5f5 0%, #ffe0e0 100%);
+    color: #CC0000;
     font-size: 0.875rem;
     font-weight: 600;
-    box-shadow: 0 1px 2px rgba(13, 110, 253, 0.15);
+    box-shadow: 0 1px 2px rgba(204, 0, 0, 0.15);
     transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
 .lca-formula-trigger:hover {
     transform: translateY(-1px);
-    box-shadow: 0 4px 10px rgba(13, 110, 253, 0.22);
+    box-shadow: 0 4px 10px rgba(204, 0, 0, 0.22);
     background: linear-gradient(180deg, #ffffff 0%, #dbeafe 100%);
 }
 .lca-formula-popover.popover {
@@ -4534,7 +4577,7 @@ _CHECKBOX_PANEL_CSS = ("""
     max-width: 520px;
 }
 .lca-formula-popover .popover-header {
-    background: linear-gradient(135deg, #0d6efd 0%, #0a58ca 100%);
+    background: linear-gradient(135deg, #CC0000 0%, #990000 100%);
     color: #fff;
     font-weight: 600;
     border-bottom: none;
@@ -4571,7 +4614,7 @@ _CHECKBOX_PANEL_CSS = ("""
     border-left: 2px solid #dbe4f0;
 }
 .lca-formula-var {
-    color: #0d6efd;
+    color: #CC0000;
     font-weight: 600;
 }
 .lca-formula-legend {
@@ -4598,8 +4641,8 @@ _CHECKBOX_PANEL_CSS = ("""
     font-size: 0.75rem;
     padding: 0.15rem 0.4rem;
     border-radius: 6px;
-    background: #e7f1ff;
-    color: #0a58ca;
+    background: #ffe0e0;
+    color: #CC0000;
 }
 .lca-section-impacts {
     display: flex;
@@ -4614,9 +4657,9 @@ _CHECKBOX_PANEL_CSS = ("""
     line-height: 1.35;
     padding: 0.3rem 0.75rem;
     border-radius: 999px;
-    background: #e7f1ff;
-    color: #0a58ca;
-    border: 1px solid #b6d4fe;
+    background: #ffe0e0;
+    color: #CC0000;
+    border: 1px solid #ff9999;
 }
 .lca-section-impact-chip-muted {
     background: #f0f4f8;
@@ -4653,7 +4696,7 @@ _CHECKBOX_PANEL_CSS = ("""
 .lca-norm-table thead th {
     position: sticky;
     top: 0;
-    background: #eef4ff;
+    background: #fff0f0;
     color: #1a2b42;
     font-weight: 600;
     white-space: nowrap;
@@ -4667,10 +4710,94 @@ _CHECKBOX_PANEL_CSS = ("""
     text-align: right;
     min-width: 3.5rem;
 }
+.lca-comparison-table-wrap {
+    max-width: 100%;
+    max-height: min(60vh, 520px);
+    overflow: auto;
+    margin: 0 1rem 1rem;
+    border-radius: 8px;
+    border: 1px solid #dbe4f0;
+    background: #fff;
+    scrollbar-gutter: stable;
+    scrollbar-width: thin;
+}
+.lca-comparison-table-wrap::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+.lca-comparison-table-wrap::-webkit-scrollbar-thumb {
+    background: #b6c2d1;
+    border-radius: 4px;
+}
+.lca-comparison-table {
+    font-size: 0.82rem;
+    margin-bottom: 0;
+    width: max-content;
+    min-width: 100%;
+}
+.lca-comparison-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: #eeeeee;
+    color: #1a2b42;
+    font-weight: 600;
+    white-space: nowrap;
+    vertical-align: middle;
+}
+.lca-comparison-table thead th.lca-comparison-sortable {
+    cursor: pointer;
+    user-select: none;
+}
+.lca-comparison-table thead th.lca-comparison-sortable:hover {
+    background: #e2e2e2;
+}
+.lca-comparison-table thead th.lca-sort-asc:not(.lca-comparison-table-fiber)::after {
+    content: " ▲";
+    font-size: 0.7em;
+    color: #666;
+}
+.lca-comparison-table thead th.lca-sort-desc:not(.lca-comparison-table-fiber)::after {
+    content: " ▼";
+    font-size: 0.7em;
+    color: #666;
+}
+.lca-comparison-table thead th.lca-sort-asc .lca-fiber-header-name::after {
+    content: " ▲";
+    font-size: 0.7em;
+    color: #666;
+}
+.lca-comparison-table thead th.lca-sort-desc .lca-fiber-header-name::after {
+    content: " ▼";
+    font-size: 0.7em;
+    color: #666;
+}
+.lca-comparison-table-fiber .lca-fiber-header-name {
+    margin-right: 0.2rem;
+}
+.lca-fiber-info-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: #4a6fa5;
+    line-height: 1;
+    vertical-align: middle;
+    text-decoration: none;
+}
+a.lca-fiber-info-icon:hover,
+a.lca-fiber-info-icon:focus {
+    color: #CC0000;
+    outline: none;
+}
+.lca-fiber-info-icon--inactive {
+    color: #8a97a8;
+    cursor: default;
+    pointer-events: none;
+}
 .lca-norm-table td.text-end {
     font-variant-numeric: tabular-nums;
     font-weight: 600;
-    color: #0a58ca;
+    color: #CC0000;
 }
 .lca-missing-value {
     color: #c0392b !important;
@@ -4729,7 +4856,7 @@ _CHECKBOX_PANEL_CSS = ("""
     flex-direction: column;
 }
 .lca-hover-panel-title {
-    background: linear-gradient(135deg, #0d6efd 0%, #0a58ca 100%);
+    background: linear-gradient(135deg, #CC0000 0%, #990000 100%);
     color: #fff;
     font-weight: 600;
     padding: 0.65rem 1rem;
@@ -4923,6 +5050,120 @@ def _compact_values_table_ui(
     )
 
 
+def _fiber_info_url(fiber: str) -> str | None:
+    """Return a configured fiber info URL, or None when the icon should stay inert."""
+    key = _normalize_catalog_label(fiber)
+    raw = FIBER_INFO_URLS.get(key)
+    if raw is None and fiber in FIBER_INFO_URLS:
+        raw = FIBER_INFO_URLS[fiber]
+    if raw is None:
+        return None
+    url = str(raw).strip()
+    return url or None
+
+
+def _fiber_info_icon_ui(fiber: str) -> ui.Tag:
+    """Info mark beside a fiber name; becomes a link once FIBER_INFO_URLS has a URL."""
+    icon = ui.HTML(_FIBER_INFO_ICON_SVG)
+    url = _fiber_info_url(fiber)
+    if url:
+        return ui.tags.a(
+            icon,
+            href=url,
+            target="_blank",
+            rel="noopener noreferrer",
+            class_="lca-fiber-info-icon",
+            title=f"More about {fiber}",
+            **{"aria-label": f"More information about {fiber}"},
+        )
+    return ui.tags.span(
+        icon,
+        class_="lca-fiber-info-icon lca-fiber-info-icon--inactive",
+        title="Fiber information link coming soon",
+        **{"aria-hidden": "true"},
+    )
+
+
+def _fiber_column_header_ui(fiber: str) -> ui.Tag:
+    return ui.tags.th(
+        ui.tags.span(str(fiber), class_="lca-fiber-header-name"),
+        _fiber_info_icon_ui(fiber),
+        class_="lca-comparison-table-fiber lca-comparison-sortable",
+        title="Click to sort by this fiber",
+        **{"data-sort-type": "number"},
+    )
+
+
+def _comparison_meta_header_ui(label: str, *, sort_type: str = "text") -> ui.Tag:
+    return ui.tags.th(
+        str(label),
+        class_="lca-comparison-sortable",
+        title=f"Click to sort by {label}",
+        **{"data-sort-type": sort_type},
+    )
+
+
+def _comparison_data_table_ui(table: pd.DataFrame, impact_col: str) -> ui.Tag:
+    """HTML Comparison Table with a dynamic info icon beside every fiber column."""
+    if table.empty:
+        return ui.tags.p(
+            "No rows for the current selection.",
+            class_="mb-0 small text-muted px-3 pb-3",
+        )
+    if list(table.columns) == ["Message"]:
+        return ui.tags.p(
+            str(table.iloc[0, 0]),
+            class_="mb-0 small text-muted px-3 pb-3",
+        )
+
+    meta_cols = [c for c in table.columns if c in {impact_col, "Units"}]
+    fiber_cols = [c for c in table.columns if c not in {impact_col, "Units"}]
+    header = ui.tags.tr(
+        *[
+            _comparison_meta_header_ui(col, sort_type="text")
+            for col in meta_cols
+        ],
+        *[_fiber_column_header_ui(fiber) for fiber in fiber_cols],
+    )
+    rows: list[ui.Tag] = []
+    for _, row in table.iterrows():
+        cells: list[ui.Tag] = []
+        for col in meta_cols:
+            text = str(row[col])
+            cells.append(
+                ui.tags.td(text, **{"data-sort-value": text.casefold()})
+            )
+        for fiber in fiber_cols:
+            value = row[fiber]
+            safe = _json_safe_number(value)
+            if safe is None:
+                cells.append(
+                    ui.tags.td(
+                        MISSING_VALUE_LABEL,
+                        class_="text-end lca-missing-value",
+                        **{"data-sort-value": ""},
+                    )
+                )
+            else:
+                cells.append(
+                    ui.tags.td(
+                        _format_display_number(value),
+                        class_="text-end",
+                        **{"data-sort-value": str(safe)},
+                    )
+                )
+        rows.append(ui.tags.tr(*cells))
+
+    return ui.tags.div(
+        ui.tags.table(
+            ui.tags.thead(header),
+            ui.tags.tbody(*rows),
+            class_="table table-sm table-hover lca-comparison-table",
+        ),
+        class_="lca-comparison-table-wrap",
+    )
+
+
 def _comparison_table_section(title: str, output_id: str) -> ui.Tag:
     return ui.div(
         ui.div(
@@ -4930,7 +5171,7 @@ def _comparison_table_section(title: str, output_id: str) -> ui.Tag:
             _table_download_buttons(output_id),
             class_="d-flex justify-content-between align-items-center px-3 pt-3 mb-1 gap-2",
         ),
-        ui.output_data_frame(output_id),
+        ui.output_ui(output_id),
     )
 
 
@@ -5221,12 +5462,71 @@ app_ui = ui.page_sidebar(
       }
     });
   });
+
+  function comparisonSortValue(cell, sortType) {
+    var raw = cell.getAttribute("data-sort-value");
+    if (sortType === "number") {
+      if (raw === null || raw === "") return null;
+      var num = Number(raw);
+      return isNaN(num) ? null : num;
+    }
+    if (raw !== null && raw !== "") return raw;
+    return (cell.textContent || "").trim().toLowerCase();
+  }
+
+  function sortComparisonTable(table, colIndex, sortType, direction) {
+    var tbody = table.tBodies[0];
+    if (!tbody) return;
+    var rows = Array.prototype.slice.call(tbody.rows);
+    var dir = direction === "desc" ? -1 : 1;
+    rows.sort(function (rowA, rowB) {
+      var a = comparisonSortValue(rowA.cells[colIndex], sortType);
+      var b = comparisonSortValue(rowB.cells[colIndex], sortType);
+      if (a === null && b === null) return 0;
+      if (a === null) return 1;
+      if (b === null) return -1;
+      if (a < b) return -1 * dir;
+      if (a > b) return 1 * dir;
+      return 0;
+    });
+    rows.forEach(function (row) {
+      tbody.appendChild(row);
+    });
+  }
+
+  document.addEventListener("click", function (e) {
+    if (e.target.closest && e.target.closest("a.lca-fiber-info-icon")) {
+      return;
+    }
+    var th = e.target.closest && e.target.closest(
+      "table.lca-comparison-table thead th.lca-comparison-sortable"
+    );
+    if (!th) return;
+    var table = th.closest("table.lca-comparison-table");
+    if (!table) return;
+    var headers = Array.prototype.slice.call(
+      table.querySelectorAll("thead th")
+    );
+    var colIndex = headers.indexOf(th);
+    if (colIndex < 0) return;
+    var sortType = th.getAttribute("data-sort-type") || "text";
+    var nextDir = th.classList.contains("lca-sort-asc") ? "desc" : "asc";
+    headers.forEach(function (header) {
+      header.classList.remove("lca-sort-asc", "lca-sort-desc");
+    });
+    th.classList.add(nextDir === "asc" ? "lca-sort-asc" : "lca-sort-desc");
+    sortComparisonTable(table, colIndex, sortType, nextDir);
+  });
 })();
 """),
         width=360,
     ),
     ui.navset_tab(
-        _home_nav_panel(),
+        # Temporarily hidden from the frontend (panel builders kept below):
+        # _home_nav_panel(),
+        # _method_nav_panel(),
+        # _team_nav_panel(),
+        # _references_nav_panel(),
         ui.nav_panel(
             "Comparision Table",
             _with_partner_footer(
@@ -5248,7 +5548,7 @@ app_ui = ui.page_sidebar(
                         "chart_kind_all",
                         "Chart type",
                         choices=_all_impacts_chart_kind_choices(),
-                        selected="radar",
+                        selected="heatmap",
                     ),
                     ui.output_ui("all_impacts_toolbar"),
                     _chart_plot_output("all_impacts_plot"),
@@ -5261,10 +5561,8 @@ app_ui = ui.page_sidebar(
             _section_nav_panel(section_key)
             for section_key in IMPACT_SECTIONS
         ],
-        _method_nav_panel(),
-        _team_nav_panel(),
-        _references_nav_panel(),
         id="main_tabs",
+        selected=TAB_COMPARISON,
     ),
     title=ui.input_action_button(
         "nav_home_title",
@@ -5750,14 +6048,22 @@ def server(input, output, session):
         )
 
     @output(id="data_tab_raw", suspend_when_hidden=True)
-    @render.data_frame
+    @render.ui
     def data_tab_raw():
-        return comparison_table_raw_df()
+        data = current_data()
+        return _comparison_data_table_ui(
+            comparison_table_raw_df(),
+            data.impact_col,
+        )
 
     @output(id="data_tab_normalized", suspend_when_hidden=True)
-    @render.data_frame
+    @render.ui
     def data_tab_normalized():
-        return comparison_table_normalized_df()
+        data = current_data()
+        return _comparison_data_table_ui(
+            comparison_table_normalized_df(),
+            data.impact_col,
+        )
 
     _register_table_csv_download_handler(
         output,
@@ -5931,7 +6237,7 @@ def server(input, output, session):
     _HOME_NAV_BUTTONS: dict[str, str] = {
         "nav_home_title": TAB_HOME,
         "nav_method_sidebar": TAB_METHOD,
-        "nav_method_home_lead": TAB_METHOD,
+        "nav_method_home": TAB_METHOD,
         "home_nav_comparison_table": TAB_COMPARISON,
         "home_nav_all_impacts": TAB_ALL_IMPACTS,
         "home_nav_method": TAB_METHOD,

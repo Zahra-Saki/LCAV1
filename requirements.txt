@@ -3,5 +3,7 @@ shiny
 shinywidgets
 plotly
 pandas
+numpy
+matplotlib
 ridgeplot
 kaleido==0.2.1
